@@ -1,0 +1,23 @@
+@author "Dustin Pilgrim"
+@description "Feature packed clipboard manager for X11/Wayland"
+
+gather "themes/default"
+
+clipboard:
+    theme = "default"
+    history-max-length = 100
+    enable_titlebar = true
+    force-dark-mode = false
+
+    keybinds:
+      up "k"
+      down "j"
+      left "h"
+      right "l"
+
+      delete "x"
+      delete-all ""
+      select "Return"
+    end
+end
+

@@ -1,0 +1,26 @@
+theme:
+  light:
+    background "#ECEFF4"
+    background-alt "#E5E9F0"
+    titlebar-background "#E5E9F0"
+    text-primary "#2E3440"
+    text-secondary "#4C566A"
+    hover "#D8DEE9"
+    hover-titlebar "#D8DEE9"
+    selected "#88C0D0"
+    highlight "#81A1C1"
+    outline "#5E81AC"
+  end
+  dark:
+    background "#2E3440"
+    background-alt "#3B4252"
+    titlebar-background "#3B4252"
+    text-primary "#D8DEE9"
+    text-secondary "#E5E9F0"
+    hover "#434C5E"
+    hover-titlebar "#434C5E"
+    selected "#88C0D0"
+    highlight "#81A1C1"
+    outline "#5E81AC"
+  end
+end
