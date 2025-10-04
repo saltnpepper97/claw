@@ -8,6 +8,7 @@
   --hover: #eeeeee;
   --hover-titlebar: #dcdcdc;
   --selected: #d0e0ff;
+  --selected-foreground: #1a1a1a;
   --highlight: #b7410e;
   --outline: #007acc;
 }
@@ -22,6 +23,10 @@ body, html {
   height: 100vh;
   overflow: hidden;
   background-color: var(--background);
+}
+
+body::-webkit-scrollbar {
+  width: 0;
 }
 
 button {

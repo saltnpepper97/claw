@@ -5,43 +5,182 @@ mod detect;
 mod history;
 mod theme;
 
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::Arc;
-use tauri::{Emitter, generate_handler, Manager};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, EventKind};
+use tauri::{
+    generate_handler,
+    menu::{Menu, MenuItem, Submenu},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager,
+};
+use theme::Theme;
 use tokio::sync::RwLock;
 
-use config::load_claw_config;
 use commands::{
-    set_system_clipboard, 
-    get_system_clipboard, 
-    get_clipboard_history, 
-    clear_clipboard_history, 
-    remove_clipboard_entry, 
-    set_clipboard_from_history, 
-    get_history_stats,
-    get_theme,
-    get_claw_config,
+    clear_clipboard_history, get_claw_config, get_clipboard_history, get_history_stats,
+    get_system_clipboard, get_theme, remove_clipboard_entry, set_clipboard_from_history,
+    set_system_clipboard,
 };
+use config::load_claw_config;
 
 #[derive(serde::Serialize, Clone)]
 struct ConfigUpdate {
     enable_titlebar: bool,
     force_dark_mode: bool,
-    theme: String,
+    theme: Theme,
+}
+
+fn truncate_text(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        text.to_string()
+    } else {
+        format!("{}...", &text[..max_len])
+    }
+}
+
+fn update_tray_menu(
+    app: &tauri::AppHandle,
+    tray_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tray = app.tray_by_id(tray_id).ok_or("Tray not found")?;
+
+    // Load recent history items
+    let history = history::load_history(app, 100)?;
+    let recent_items = history.get_entries(Some(5));
+
+    // Create menu items
+    let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+
+    // Build menu dynamically based on whether we have history
+    let menu = if !recent_items.is_empty() {
+        let mut history_items = Vec::new();
+
+        for (idx, entry) in recent_items.iter().enumerate() {
+            let display_text = truncate_text(&entry.content.replace('\n', " "), 50);
+            let item_id = format!("history_{}", idx);
+            let menu_item = MenuItem::with_id(app, &item_id, display_text, true, None::<&str>)?;
+            history_items.push(menu_item);
+        }
+
+        // Create submenu with all history items
+        let history_submenu = Submenu::with_items(
+            app,
+            "Recent Clipboard",
+            true,
+            &history_items
+                .iter()
+                .map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+                .collect::<Vec<_>>(),
+        )?;
+
+        // Add clear history button
+        let clear_i = MenuItem::with_id(app, "clear_history", "Clear History", true, None::<&str>)?;
+        let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+        Menu::with_items(app, &[&show_i, &history_submenu, &clear_i, &quit_i])?
+    } else {
+        let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+        Menu::with_items(app, &[&show_i, &quit_i])?
+    };
+
+    tray.set_menu(Some(menu))?;
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle();
 
+            let main_window = app.get_webview_window("main").unwrap();
+            main_window.on_window_event({
+                let app_handle = app_handle.clone();
+                move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                }
+            });
+
+            // Create initial tray menu
+            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            // Build tray icon with unique ID
+            let tray_id = "claw-tray";
+            let _tray = TrayIconBuilder::with_id(tray_id)
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event({
+                    let app_handle = app_handle.clone();
+                    let tray_id_clone = tray_id.to_string();
+                    move |app, event| {
+                        let event_id = event.id.as_ref();
+                        match event_id {
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            "clear_history" => {
+                                // Clear history
+                                if let Ok(mut hist) = history::load_history(&app_handle, 100) {
+                                    hist.clear();
+                                    let _ = history::save_history(&app_handle, &hist);
+                                    let _ = app_handle.emit("history-updated", "");
+                                    // Update tray menu
+                                    let _ = update_tray_menu(&app_handle, &tray_id_clone);
+                                }
+                            }
+                            id if id.starts_with("history_") => {
+                                // Extract index and set clipboard
+                                if let Ok(idx) =
+                                    id.strip_prefix("history_").unwrap().parse::<usize>()
+                                {
+                                    if let Ok(hist) = history::load_history(&app_handle, 100) {
+                                        let entries = hist.get_entries(Some(5));
+                                        if let Some(entry) = entries.get(idx) {
+                                            let _ = crate::clipboard::set_clipboard(&entry.content);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // Update tray menu with history
+            let _ = update_tray_menu(&app_handle, tray_id);
+
             // Load config once at startup
             let claw_config = Arc::new(RwLock::new(load_claw_config()));
-            println!("Loaded config: {:?}", claw_config);
-
-            // Manage Tauri state
             app.manage(claw_config.clone());
 
             // --- Emit initial config to frontend ---
@@ -51,9 +190,9 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     let cfg = claw_config.read().await;
                     let initial = ConfigUpdate {
-                        enable_titlebar: cfg.enable_titlebar,
-                        force_dark_mode: cfg.force_dark_mode,
-                        theme: cfg.theme.clone(),
+                        enable_titlebar: cfg.0.enable_titlebar,
+                        force_dark_mode: cfg.0.force_dark_mode,
+                        theme: cfg.1.clone(),
                     };
                     let _ = app_handle.emit("config-reloaded", initial);
                 });
@@ -68,7 +207,7 @@ pub fn run() {
 
                     let mut last_content = String::new();
                     loop {
-                        let history_limit = claw_config.read().await.history_limit as usize;
+                        let history_limit = claw_config.read().await.0.history_limit as usize;
 
                         if let Ok(content) = crate::clipboard::get_clipboard() {
                             if !content.is_empty() && content != last_content {
@@ -84,6 +223,9 @@ pub fn run() {
                                 }
 
                                 let _ = app_handle.emit("history-updated", &content);
+
+                                // Update tray menu with new history
+                                let _ = update_tray_menu(&app_handle, "claw-tray");
                             }
                         }
 
@@ -97,36 +239,94 @@ pub fn run() {
                 let app_handle = app_handle.clone();
                 let claw_config = claw_config.clone();
                 tauri::async_runtime::spawn(async move {
-                    use std::sync::mpsc::channel;
-                    use std::path::PathBuf;
                     use notify::Config;
+                    use std::collections::HashSet;
+                    use std::path::PathBuf;
+                    use std::sync::mpsc::channel;
 
-                    let config_path: PathBuf = config::find_config().expect("No claw.rune config found");
+                    let main_config_path: PathBuf =
+                        config::find_config().expect("No claw.rune config found");
+
+                    // Set of all watched paths
+                    let mut watched_paths = HashSet::new();
+                    watched_paths.insert(main_config_path.clone());
+
+                    // Helper to find gathered files (non-aliased) so we can watch them too
+                    let gather_paths = || -> Vec<PathBuf> {
+                        let content =
+                            std::fs::read_to_string(&main_config_path).unwrap_or_default();
+                        let gather_regex =
+                            regex::Regex::new(r#"gather\s+"([^"]+)"(?:\s+as\s+(\w+))?"#).unwrap();
+                        gather_regex
+                            .captures_iter(&content)
+                            .filter_map(|cap| {
+                                let path_str = &cap[1];
+                                let expanded_path = if path_str.starts_with("~/") {
+                                    dirs::home_dir().map(|h| h.join(&path_str[2..]))
+                                } else {
+                                    Some(PathBuf::from(path_str))
+                                }?;
+                                if expanded_path.exists() {
+                                    Some(expanded_path)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    };
+
+                    // Add gathered paths
+                    for path in gather_paths() {
+                        watched_paths.insert(path);
+                    }
 
                     let (tx, rx) = channel();
                     let mut watcher: RecommendedWatcher =
                         Watcher::new(tx, Config::default()).expect("Failed to create file watcher");
 
-                    watcher.watch(&config_path, RecursiveMode::NonRecursive)
-                        .expect("Failed to watch config file");
+                    for path in &watched_paths {
+                        watcher
+                            .watch(path, RecursiveMode::NonRecursive)
+                            .expect("Failed to watch file");
+                    }
 
                     loop {
                         match rx.recv() {
                             Ok(event) => {
-                                if let EventKind::Modify(_) = event.unwrap().kind {
-                                    if let Ok(new_config) = config::load_config(&config_path.to_string_lossy()) {
-                                        *claw_config.write().await = new_config.clone();
-                                        println!("Config hot-reloaded!");
+                                if let Ok(ev) = event {
+                                    if let EventKind::Modify(_) = ev.kind {
+                                        if let Ok(new_config) =
+                                            config::load_config(&main_config_path.to_string_lossy())
+                                        {
+                                            *claw_config.write().await = new_config.clone();
 
-                                        let update = ConfigUpdate {
-                                            enable_titlebar: new_config.enable_titlebar,
-                                            force_dark_mode: new_config.force_dark_mode,
-                                            theme: new_config.theme.clone(),
-                                        };
+                                            let update = ConfigUpdate {
+                                                enable_titlebar: new_config.0.enable_titlebar,
+                                                force_dark_mode: new_config.0.force_dark_mode,
+                                                theme: new_config.1.clone(),
+                                            };
 
-                                        let _ = app_handle.emit("config-reloaded", update);
-                                    } else {
-                                        eprintln!("Failed to reload config");
+                                            let _ = app_handle.emit("config-reloaded", update);
+
+                                            // Rebuild watched paths if new gathers appeared
+                                            let new_paths: HashSet<_> =
+                                                gather_paths().into_iter().collect();
+                                            for path in new_paths.difference(&watched_paths) {
+                                                watcher
+                                                    .watch(path, RecursiveMode::NonRecursive)
+                                                    .ok();
+                                            }
+                                            watched_paths = new_paths
+                                                .union(
+                                                    &[main_config_path.clone()]
+                                                        .into_iter()
+                                                        .collect(),
+                                                )
+                                                .cloned()
+                                                .collect();
+                                        } else {
+                                            eprintln!("Failed to reload config");
+                                        }
                                     }
                                 }
                             }

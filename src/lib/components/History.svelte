@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { history } from '$lib/stores/historyStore';
+    import { showTitlebar } from '$lib/stores/uiStore';
     import { loadHistory, useFromHistory, removeFromHistory, truncate, formatDate, clearAllHistory } from '$lib/api/clipboard';
     import { keybinds, loadKeybindsFromBackend, matchKeybind } from '$lib/api/keybinds';
     import { get } from 'svelte/store';
@@ -76,7 +77,21 @@
 {:else}  
     <div class="history-list" bind:this={historyContainer}>
         {#each $history as entry, i (entry.id)}
-            <div class="history-item {selectedIndex === i ? 'selected' : ''}" data-index={i} onclick={() => { selectedIndex = i; scrollToSelected(); }}>
+            <div 
+                class="history-item {selectedIndex === i ? 'selected' : ''}" 
+                data-index={i} 
+                role="button" 
+                tabindex="0" 
+                onclick={() => { selectedIndex = i; scrollToSelected(); }}
+                onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        if (selectedIndex >= 0) {
+                          useFromHistory($history[selectedIndex]);
+                        }
+                        e.preventDefault();
+                    }
+                }}
+            >
                 <div class="content">
                     <div class="text">{truncate(entry.content)}</div>
                     <div class="meta">
@@ -90,11 +105,6 @@
 {/if}
 
 <style>
-    .history-item.selected {
-        border-color: var(--outline);
-        background-color: var(--selected);
-    }
-     
     .empty {
         display: flex;
         align-items: center;
@@ -118,6 +128,10 @@
         scroll-behavior: smooth;
     }
 
+    .history-list::-webkit-scrollbar {
+        width: 0;
+    }
+
     .history-item {
         display: flex;
         justify-content: space-between;
@@ -129,8 +143,13 @@
         border-style: solid;
         border-color: transparent;
         border-width: 1px 0 1px 0;
-        transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        transition: background-color 150ms ease, border-color 150ms ease;
         position: relative;
+    }
+
+    .history-item.selected {
+        border-color: var(--outline);
+        background-color: var(--selected);
     }
 
     .history-item:hover {
@@ -146,7 +165,6 @@
     .content {
         flex: 1;
         margin-right: 0px;
-        transition: all ease 200ms;
     }
 
     .text {
@@ -158,11 +176,20 @@
         word-break: break-all;
     }
 
+    .history-item.selected .text {
+        color: var(--selected-foreground);
+    }
+
     .meta {
         display: flex;
         gap: 15px;
         font-size: 0.85em;
         color: var(--text-secondary);
+    }
+
+    .history-item.selected .meta {
+        color: var(--selected-foreground);
+        opacity: 0.8;
     }
 
     .type {
@@ -171,7 +198,12 @@
         padding: 0 5px;
         font-weight: 500;
         background-color: var(--background-alt);
-        color: var(--highlight)
+        color: var(--highlight);
+    }
+
+    .history-item.selected .type {
+        background-color: rgba(0, 0, 0, 0.2);
+        color: var(--selected-foreground);
     }
 
     @media (max-width: 600px) {

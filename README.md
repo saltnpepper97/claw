@@ -1,38 +1,109 @@
-# sv
+<p align=center>
+ <img src="images/claw.png" alt="Claw Logo" width="200"/>
+</p>
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+<h1 align=center>Claw</h1>
+<p align=center>
+ <em>Crustacean powered clipboard for X11 & Wayland</em>
+</p>
 
-## Creating a project
+## Features
+- **Cross-platform** design (X11 `xclip`/Wayland `wl_clipboard`)
+- **Window Manager** friendly (Keyboard driven interface)
+- **Clipboard History** with configurable limit
+- **System Tray Integration** with quick access to recent items
+- **Highly** customizable (keybinds, titlebar, force-dark)	
+- **Themeable** with several built-in themes, including:
+	- 🐱 Catpuccin
+	- 🧛🏻 Dracula
+	- ☮️ Gruvbox
+	- ❄️ Nord
+	- ☀️ Solarized
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Installation
 
-```sh
-# create a new project in the current directory
-npx sv create
+If you are running Arch Linux you can grab the `claw` 
+package from the `aur`
 
-# create a new project in my-app
-npx sv create my-app
+```bash
+yay -S claw
+```
+or
+
+```bash
+paru -S claw
 ```
 
-## Developing
+### Manual Install:
+Grab the latest download from the [releases](https://github.com/saltnpepper97/claw/releases)
+page. If you are on **Debian** you can use the provided `.deb` file.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Keybinds
 
-```sh
-npm run dev
+### Navigation
+| Key | Action | Description |
+|-----|--------|-------------|
+| <kbd>k</kbd> | Move Up | Navigate to previous clipboard entry |
+| <kbd>j</kbd> | Move Down | Navigate to next clipboard entry |
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+### Actions
+| Key | Action | Description |
+|-----|--------|-------------|
+| <kbd>Return</kbd> | Select | Copy selected entry to clipboard |
+| <kbd>x</kbd> | Delete | Remove current entry from history |
+| <kbd>Shift</kbd>+<kbd>x</kbd> | Delete All | Clear entire clipboard history |
+
+### Customization
+All keybinds are fully customizable through the configuration file. See the example configuration below.
+
+## Example Configuration
+
+```rune
+@author "Dustin Pilgrim"
+@description "Feature packed clipboard manager for X11/Wayland"
+
+clipboard:
+    theme = "default"
+    history-max-length = 100
+    enable_titlebar = true
+    force-dark-mode = false
+
+    keybinds:
+      up "k"
+      down "j"
+      delete "x"
+      delete-all "Shift+x"
+      select "Return"
+    end
+end
 ```
 
-## Building
+## System Tray
 
-To create a production version of your app:
+Claw includes a system tray icon for quick access:
+- **Left Click:** Show/hide the main window
+- **Recent Clipboard:** Access your 5 most recent clipboard entries
+- **Clear History:** Quickly clear all clipboard history
+- **Quit:** Exit the application
 
-```sh
-npm run build
-```
+## Contributing
 
-You can preview the production build with `npm run preview`.
+Contributions are welcome! Feel free to open issues or submit pull requests.
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+### Adding Themes
+
+Want to contribute a new theme? We'd love to see your creativity!
+
+1. Check out the `examples/themes/` directory to see the theme structure
+2. Create your theme file following the established format
+3. Test your theme with Claw to ensure all colors work well
+4. Submit a pull request with your theme
+
+Theme submissions should include appropriate color choices for:
+- Background colors
+- Foreground/text colors
+- Accent colors
+- Selection colors
+- Border colors
+
+Make sure your theme provides good contrast and readability!

@@ -3,32 +3,25 @@ theme:
     background "#ffffff"
     background-alt "#eaeaea"
     titlebar-background "#f7f7f7"
-
     text-primary "#1a1a1a"
     text-secondary "#333333"
-
     hover "#eeeeee"
     hover-titlebar "#dcdcdc" 
-
     selected "#d0e0ff"
-
+    selected-foreground "#1a1a1a"
     highlight "#b7410e"
     outline "#007acc"
   end
-
   dark:
     background "#1e1e1e"
-    background-alt "2a2a2a"
+    background-alt "#2a2a2a"
     titlebar-background "#252525"
-
     text-primary "#e0e0e0"
     text-secondary "#a0a0a0"
-
     hover "#333333"
-    hover-titlebar "3a3a3a"
-
+    hover-titlebar "#3a3a3a"
     selected "#214f70"
-
+    selected-foreground "#e0e0e0"
     highlight "#b7410e"
     outline "#007acc"
   end

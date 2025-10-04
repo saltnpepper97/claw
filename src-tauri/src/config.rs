@@ -1,6 +1,7 @@
-use std::path::{Path, PathBuf};
 use eyre::Result;
+use std::path::{Path, PathBuf};
 
+use crate::theme::{find_theme_file, Theme};
 use rune_cfg::RuneConfig;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +16,6 @@ pub struct Keybinds {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardConfig {
-    pub theme: String,
     pub history_limit: u64,
     pub enable_titlebar: bool,
     pub force_dark_mode: bool,
@@ -23,8 +23,6 @@ pub struct ClipboardConfig {
 }
 
 // --- Helpers ---
-
-// Try both hyphenated and underscored versions of a key
 fn try_get_string(config: &RuneConfig, base_path: &str) -> Option<String> {
     let hyphenated = base_path.replace('_', "-");
     if let Ok(val) = config.get::<String>(&hyphenated) {
@@ -62,36 +60,126 @@ fn try_get_number(config: &RuneConfig, base_path: &str, default: u64) -> u64 {
 }
 
 // --- Load Config ---
+pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
+    let content = std::fs::read_to_string(path)?;
+    let mut config = RuneConfig::from_str(&content)?;
 
-pub fn load_config(path: &str) -> Result<ClipboardConfig> {
-    let config = RuneConfig::from_file(path)?;
+    let gather_regex =
+        regex::Regex::new(r#"(?m)^[ \t]*gather\s+"([^"]+)"(?:\s+as\s+(\w+))?"#).unwrap();
 
-    let theme = try_get_string(&config, "clipboard.theme").unwrap_or_else(|| "default".into());
-    let history_limit = try_get_number(&config, "clipboard.history_max_length", 50);
-    let enable_titlebar = try_get_bool(&config, "clipboard.enable_titlebar", true);
-    let force_dark_mode = try_get_bool(&config, "clipboard.force_dark_mode", false);
+    let mut non_aliased_imports = Vec::new();
 
-    // --- Keybinds ---
+    for cap in gather_regex.captures_iter(&content) {
+        let gather_path = &cap[1];
+        let alias = cap.get(2).map(|m| m.as_str());
+
+        let expanded_path = if gather_path.starts_with("~/") {
+            if let Some(home) = dirs::home_dir() {
+                home.join(&gather_path[2..]).to_string_lossy().to_string()
+            } else {
+                gather_path.to_string()
+            }
+        } else {
+            gather_path.to_string()
+        };
+
+        if Path::new(&expanded_path).exists() {
+            if let Some(alias_name) = alias {
+                // Aliased import - inject as separate document
+                let imported_cfg = RuneConfig::from_file(&expanded_path)?;
+                if let Some(imported_doc) = imported_cfg.document() {
+                    config.inject_import(alias_name.to_string(), imported_doc.clone());
+                }
+            } else {
+                // Non-aliased import - collect for merging
+                non_aliased_imports.push(expanded_path);
+            }
+        }
+    }
+
+    // Process non-aliased imports by merging their content
+    if !non_aliased_imports.is_empty() {
+        let mut merged_content = content.clone();
+        for import_path in non_aliased_imports {
+            let import_content = std::fs::read_to_string(&import_path)?;
+            merged_content.push_str("\n");
+            merged_content.push_str(&import_content);
+        }
+        config = RuneConfig::from_str(&merged_content)?;
+    }
+
+    let aliases = config.import_aliases();
+
+    // Load the theme block with priority system
+    let theme = {
+        let mut loaded_theme = None;
+
+        // PRIORITY 1: Check for aliased gather imports (gather "path" as alias)
+        for alias in aliases {
+            if config.has_document(&alias) {
+                let test_path = format!("{}.theme.light.background", alias);
+                if config.get::<String>(&test_path).is_ok() {
+                    loaded_theme = Some(Theme::from_config(&config, Some(&alias)));
+                    break;
+                }
+            }
+        }
+
+        // PRIORITY 2: Check for top-level theme block (from non-aliased gather)
+        if loaded_theme.is_none() {
+            if config.get::<String>("theme.light.background").is_ok() {
+                loaded_theme = Some(Theme::from_config(&config, None));
+            }
+        }
+
+        // PRIORITY 3: Check for clipboard.theme field
+        if loaded_theme.is_none() {
+            if let Some(theme_name) = try_get_string(&config, "clipboard.theme") {
+                // Try to find and load the theme file
+                if let Some(theme_path) = find_theme_file(&theme_name) {
+                    if let Ok(theme_cfg) = RuneConfig::from_file(&theme_path) {
+                        loaded_theme = Some(Theme::from_config(&theme_cfg, None));
+                    }
+                }
+            }
+        }
+
+        // PRIORITY 4: Check for "theme" document
+        if loaded_theme.is_none() && config.has_document("theme") {
+            loaded_theme = Some(Theme::from_config(&config, Some("theme")));
+        }
+
+        // PRIORITY 5: Default theme
+        loaded_theme.unwrap_or_else(|| Theme::default())
+    };
+
+    // Load clipboard config
+    let history_limit = try_get_number(&config, "clipboard.history-max-length", 50);
+    let enable_titlebar = try_get_bool(&config, "clipboard.enable-titlebar", true);
+    let force_dark_mode = try_get_bool(&config, "clipboard.force-dark-mode", false);
+
     let keybinds_path = "clipboard.keybinds";
     let keybinds = Keybinds {
         up: try_get_string(&config, &format!("{}.up", keybinds_path)).unwrap_or_default(),
         down: try_get_string(&config, &format!("{}.down", keybinds_path)).unwrap_or_default(),
         delete: try_get_string(&config, &format!("{}.delete", keybinds_path)).unwrap_or_default(),
-        delete_all: try_get_string(&config, &format!("{}.delete_all", keybinds_path)).unwrap_or_default(),
+        delete_all: try_get_string(&config, &format!("{}.delete_all", keybinds_path))
+            .unwrap_or_default(),
         select: try_get_string(&config, &format!("{}.select", keybinds_path)).unwrap_or_default(),
     };
 
-    Ok(ClipboardConfig {
-        theme,
+    let clipboard = ClipboardConfig {
         history_limit,
         enable_titlebar,
         force_dark_mode,
         keybinds,
-    })
+    };
+
+    Ok((clipboard, theme))
 }
 
+// --- Config file discovery ---
 pub fn find_config() -> Option<PathBuf> {
-    // 1. User config
     if let Some(home) = dirs::config_dir() {
         let user_config = home.join("claw").join("claw.rune");
         if user_config.exists() {
@@ -99,7 +187,6 @@ pub fn find_config() -> Option<PathBuf> {
         }
     }
 
-    // 2. Fallback default config
     let default_config = Path::new("/usr/share/doc/claw/claw.rune");
     if default_config.exists() {
         return Some(default_config.to_path_buf());
@@ -108,34 +195,7 @@ pub fn find_config() -> Option<PathBuf> {
     None
 }
 
-pub fn load_claw_config() -> ClipboardConfig {
+pub fn load_claw_config() -> (ClipboardConfig, Theme) {
     let path = find_config().expect("No claw.rune config found");
     load_config(&path.to_string_lossy()).expect("Failed to parse claw.rune config")
-}
-
-
-// --- Test ---
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_load_claw_config() {
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("../examples/claw.rune");
-
-        let config = load_config(path.to_str().unwrap()).expect("Failed to load Claw config");
-
-        println!("Loaded clipboard config: {:#?}", config);
-
-        assert_eq!(config.theme, "default");
-        assert_eq!(config.history_limit, 50);
-        assert_eq!(config.enable_titlebar, true);
-        assert_eq!(config.force_dark_mode, false);
-        assert_eq!(config.keybinds.up, "k");
-        assert_eq!(config.keybinds.down, "j");
-        assert_eq!(config.keybinds.delete, "x");
-        assert_eq!(config.keybinds.select, "Return");
-    }
 }

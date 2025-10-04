@@ -1,20 +1,21 @@
 use std::sync::Arc;
+use tauri::{command, AppHandle, State};
 use tokio::sync::RwLock;
-use tauri::{AppHandle, State, command};
 
+use crate::clipboard::{get_clipboard, set_clipboard};
 use crate::config::ClipboardConfig;
-use crate::clipboard::{set_clipboard, get_clipboard};
-use crate::history::{load_history, save_history, add_to_history, ClipboardEntry};
+use crate::history::{add_to_history, load_history, save_history, ClipboardEntry};
+use crate::theme::Theme;
 
 #[command]
 pub async fn set_system_clipboard(
-    app_handle: AppHandle, 
+    app_handle: AppHandle,
     text: String,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<(), String> {
     set_clipboard(&text)?;
 
-    let max_entries = config.read().await.history_limit as usize;
+    let max_entries = config.read().await.0.history_limit as usize;
     add_to_history(&app_handle, text, "text".to_string(), max_entries)?;
 
     Ok(())
@@ -23,13 +24,18 @@ pub async fn set_system_clipboard(
 #[command]
 pub async fn get_system_clipboard(
     app_handle: AppHandle,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<String, String> {
     let content = get_clipboard()?;
 
     if !content.trim().is_empty() {
-        let max_entries = config.read().await.history_limit as usize;
-        add_to_history(&app_handle, content.clone(), "text".to_string(), max_entries)?;
+        let max_entries = config.read().await.0.history_limit as usize;
+        add_to_history(
+            &app_handle,
+            content.clone(),
+            "text".to_string(),
+            max_entries,
+        )?;
     }
 
     Ok(content)
@@ -37,11 +43,11 @@ pub async fn get_system_clipboard(
 
 #[command]
 pub async fn get_clipboard_history(
-    app_handle: AppHandle, 
+    app_handle: AppHandle,
     limit: Option<usize>,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<Vec<ClipboardEntry>, String> {
-    let max_entries = config.read().await.history_limit as usize;
+    let max_entries = config.read().await.0.history_limit as usize;
     let history = load_history(&app_handle, max_entries)?;
     Ok(history.get_entries(limit))
 }
@@ -49,9 +55,9 @@ pub async fn get_clipboard_history(
 #[command]
 pub async fn clear_clipboard_history(
     app_handle: AppHandle,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<(), String> {
-    let max_entries = config.read().await.history_limit as usize;
+    let max_entries = config.read().await.0.history_limit as usize;
     let mut history = load_history(&app_handle, max_entries)?;
     history.clear();
     save_history(&app_handle, &history)
@@ -59,11 +65,11 @@ pub async fn clear_clipboard_history(
 
 #[command]
 pub async fn remove_clipboard_entry(
-    app_handle: AppHandle, 
+    app_handle: AppHandle,
     entry_id: String,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<bool, String> {
-    let max_entries = config.read().await.history_limit as usize;
+    let max_entries = config.read().await.0.history_limit as usize;
     let mut history = load_history(&app_handle, max_entries)?;
     let removed = history.remove_entry(&entry_id);
     save_history(&app_handle, &history)?;
@@ -72,17 +78,21 @@ pub async fn remove_clipboard_entry(
 
 #[command]
 pub async fn set_clipboard_from_history(
-    app_handle: AppHandle, 
+    app_handle: AppHandle,
     entry_id: String,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<(), String> {
-    let max_entries = config.read().await.history_limit as usize;
+    let max_entries = config.read().await.0.history_limit as usize;
     let history = load_history(&app_handle, max_entries)?;
 
     if let Some(entry) = history.entries.iter().find(|e| e.id == entry_id) {
         set_clipboard(&entry.content)?;
-        // Move this entry to the front of history
-        add_to_history(&app_handle, entry.content.clone(), entry.content_type.clone(), max_entries)?;
+        add_to_history(
+            &app_handle,
+            entry.content.clone(),
+            entry.content_type.clone(),
+            max_entries,
+        )?;
         Ok(())
     } else {
         Err("Entry not found".to_string())
@@ -92,9 +102,9 @@ pub async fn set_clipboard_from_history(
 #[command]
 pub async fn get_history_stats(
     app_handle: AppHandle,
-    config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<HistoryStats, String> {
-    let max_entries = config.read().await.history_limit as usize;
+    let max_entries = config.read().await.0.history_limit as usize;
     let history = load_history(&app_handle, max_entries)?;
     Ok(HistoryStats {
         total_entries: history.entries.len(),
@@ -110,23 +120,16 @@ pub struct HistoryStats {
 
 #[command]
 pub async fn get_theme(
-    claw_config: State<'_, Arc<RwLock<crate::config::ClipboardConfig>>>,
-) -> Result<crate::theme::Theme, String> {
-    let theme_name = claw_config.read().await.theme.clone();
-    crate::theme::load_theme(&theme_name).map_err(|e| e.to_string())
+    claw_config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
+) -> Result<Theme, String> {
+    let theme = claw_config.read().await.1.clone(); // tuple index 1 = Theme
+    Ok(theme)
 }
 
 #[command]
 pub async fn get_claw_config(
-    claw_config: State<'_, Arc<RwLock<ClipboardConfig>>>
+    claw_config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<ClipboardConfig, String> {
     let cfg = claw_config.read().await;
-    Ok(ClipboardConfig {
-        enable_titlebar: cfg.enable_titlebar,
-        force_dark_mode: cfg.force_dark_mode,
-        theme: cfg.theme.clone(),
-        history_limit: cfg.history_limit,
-        keybinds: cfg.keybinds.clone(),
-    })
+    Ok(cfg.0.clone()) // tuple index 0 = ClipboardConfig
 }
-

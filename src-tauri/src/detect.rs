@@ -19,7 +19,7 @@ fn detect_desktop_env() -> DesktopEnv {
             _ => {}
         }
     }
-    
+
     // Fallback to checking display variables
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
         DesktopEnv::Wayland

@@ -8,6 +8,7 @@ theme:
     hover "#D8DEE9"
     hover-titlebar "#D8DEE9"
     selected "#88C0D0"
+    selected-foreground "#2E3440"
     highlight "#81A1C1"
     outline "#5E81AC"
   end
@@ -20,6 +21,7 @@ theme:
     hover "#434C5E"
     hover-titlebar "#434C5E"
     selected "#88C0D0"
+    selected-foreground "#2E3440"
     highlight "#81A1C1"
     outline "#5E81AC"
   end

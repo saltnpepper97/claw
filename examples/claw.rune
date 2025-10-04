@@ -1,7 +1,10 @@
 @author "Dustin Pilgrim"
 @description "Feature packed clipboard manager for X11/Wayland"
 
-gather "themes/default"
+# Can also import themes using the `gather` keyword
+# Note: themes imported with gather take precedence over
+# theme setting in the `clipboard` block below
+# gather "~/.cache/wal/claw-pywal.rune"
 
 clipboard:
     theme = "default"
@@ -12,12 +15,40 @@ clipboard:
     keybinds:
       up "k"
       down "j"
-      left "h"
-      right "l"
-
       delete "x"
-      delete-all ""
+      delete-all "Shift+x"
       select "Return"
     end
 end
 
+# You can also define custom themes inline
+# Set theme = None (or remove the theme line) in the clipboard block above
+# and ensure `gather` is commented out or removed
+# theme:
+#   light:
+#     background "#ffffff"
+#     background-alt "#f5f5f5"
+#     titlebar-background "#e0e0e0"
+#     text-primary "#000000"
+#     text-secondary "#666666"
+#     hover "#d0d0d0"
+#     hover-titlebar "#c0c0c0"
+#     selected "#0066cc"
+#     selected-foreground "#ffffff"
+#     highlight "#ff6600"
+#     outline "#0066cc"
+#   end
+#   dark:
+#     background "#1a1a1a"
+#     background-alt "#0d0d0d"
+#     titlebar-background "#000000"
+#     text-primary "#ffffff"
+#     text-secondary "#cccccc"
+#     hover "#2a2a2a"
+#     hover-titlebar "#3a3a3a"
+#     selected "#0088ff"
+#     selected-foreground "#1a1a1a"
+#     highlight "#ff8800"
+#     outline "#0088ff"
+#   end
+# end

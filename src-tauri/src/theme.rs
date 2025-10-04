@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use rune_cfg::RuneConfig;
 use dirs;
+use rune_cfg::RuneConfig;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ThemeColors {
     pub background: String,
     #[serde(rename = "background-alt")]
@@ -17,69 +17,90 @@ pub struct ThemeColors {
     #[serde(rename = "hover-titlebar")]
     pub hover_titlebar: String,
     pub selected: String,
+    #[serde(rename = "selected-foreground")]
+    pub selected_foreground: String,
     pub highlight: String,
     pub outline: String,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Theme {
     pub light: ThemeColors,
     pub dark: ThemeColors,
 }
 
+impl Theme {
+    /// Load theme from a RuneConfig, optionally from a document alias
+    pub fn from_config(cfg: &RuneConfig, doc_alias: Option<&str>) -> Self {
+        let get_value = |base: &str, key: &str| -> String {
+            if let Some(alias) = doc_alias {
+                // First try alias.theme.base.key
+                let full_path = format!("{alias}.theme.{base}.{key}");
+                if let Ok(val) = cfg.get::<String>(&full_path) {
+                    return val;
+                }
+                // fallback to alias.base.key (in case flat structure)
+                let full_path = format!("{alias}.{base}.{key}");
+                return cfg.get::<String>(&full_path).unwrap_or_default();
+            }
+            // fallback to top-level theme block
+            cfg.get::<String>(&format!("theme.{base}.{key}"))
+                .unwrap_or_default()
+        };
+
+        let light = ThemeColors {
+            background: get_value("light", "background"),
+            background_alt: get_value("light", "background-alt"),
+            titlebar_background: get_value("light", "titlebar-background"),
+            text_primary: get_value("light", "text-primary"),
+            text_secondary: get_value("light", "text-secondary"),
+            hover: get_value("light", "hover"),
+            hover_titlebar: get_value("light", "hover-titlebar"),
+            selected: get_value("light", "selected"),
+            selected_foreground: get_value("light", "selected-foreground"),
+            highlight: get_value("light", "highlight"),
+            outline: get_value("light", "outline"),
+        };
+
+        let dark = ThemeColors {
+            background: get_value("dark", "background"),
+            background_alt: get_value("dark", "background-alt"),
+            titlebar_background: get_value("dark", "titlebar-background"),
+            text_primary: get_value("dark", "text-primary"),
+            text_secondary: get_value("dark", "text-secondary"),
+            hover: get_value("dark", "hover"),
+            hover_titlebar: get_value("dark", "hover-titlebar"),
+            selected: get_value("dark", "selected"),
+            selected_foreground: get_value("dark", "selected-foreground"),
+            highlight: get_value("dark", "highlight"),
+            outline: get_value("dark", "outline"),
+        };
+
+        Self { light, dark }
+    }
+}
+
+/// Search for a theme file on disk
 pub fn find_theme_file(theme_name: &str) -> Option<PathBuf> {
-    // User config first
+    let path = Path::new(theme_name);
+    if path.exists() {
+        return Some(path.to_path_buf());
+    }
+
     if let Some(config_dir) = dirs::config_dir() {
-        let user_path = config_dir.join("claw").join("themes").join(format!("{}.rune", theme_name));
+        let user_path = config_dir
+            .join("claw")
+            .join("themes")
+            .join(format!("{}.rune", theme_name));
         if user_path.exists() {
             return Some(user_path);
         }
     }
-    // Fallback system theme
-    let system_path = Path::new("/usr/share/doc/claw/themes")
-        .join(format!("{}.rune", theme_name));
+
+    let system_path = Path::new("/usr/share/doc/claw/themes").join(format!("{}.rune", theme_name));
     if system_path.exists() {
         return Some(system_path);
     }
+
     None
-}
-
-pub fn load_theme(theme_name: &str) -> Result<Theme, eyre::Report> {
-    let path = find_theme_file(theme_name)
-        .ok_or_else(|| eyre::eyre!("Theme file not found: {}", theme_name))?;
-    let cfg = RuneConfig::from_file(path)?;
-
-    // Helper to parse a color key
-    fn get_color(cfg: &RuneConfig, base: &str, key: &str) -> String {
-        let path = format!("theme.{}.{}", base, key);
-        cfg.get::<String>(&path).unwrap_or_default()
-    }
-
-    let light = ThemeColors {
-        background: get_color(&cfg, "light", "background"),
-        background_alt: get_color(&cfg, "light", "background-alt"),
-        titlebar_background: get_color(&cfg, "light", "titlebar-background"),
-        text_primary: get_color(&cfg, "light", "text-primary"),
-        text_secondary: get_color(&cfg, "light", "text-secondary"),
-        hover: get_color(&cfg, "light", "hover"),
-        hover_titlebar: get_color(&cfg, "light", "hover-titlebar"),
-        selected: get_color(&cfg, "light", "selected"),
-        highlight: get_color(&cfg, "light", "highlight"),
-        outline: get_color(&cfg, "light", "outline"),
-    };
-
-    let dark = ThemeColors {
-        background: get_color(&cfg, "dark", "background"),
-        background_alt: get_color(&cfg, "dark", "background-alt"),
-        titlebar_background: get_color(&cfg, "dark", "titlebar-background"),
-        text_primary: get_color(&cfg, "dark", "text-primary"),
-        text_secondary: get_color(&cfg, "dark", "text-secondary"),
-        hover: get_color(&cfg, "dark", "hover"),
-        hover_titlebar: get_color(&cfg, "dark", "hover-titlebar"),
-        selected: get_color(&cfg, "dark", "selected"),
-        highlight: get_color(&cfg, "dark", "highlight"),
-        outline: get_color(&cfg, "dark", "outline"),
-    };
-
-    Ok(Theme { light, dark })
 }
