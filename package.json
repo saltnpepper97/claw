@@ -29,6 +29,7 @@
 		]
 	},
 	"dependencies": {
+		"@tauri-apps/plugin-cli": "~2.4.0",
 		"@tauri-apps/plugin-store": "~2.4.0"
 	}
 }

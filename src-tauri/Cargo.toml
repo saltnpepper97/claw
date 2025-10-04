@@ -1,6 +1,6 @@
 [package]
 name = "claw"
-version = "1.0.1"
+version = "1.0.2"
 description = "Wayland & X11 compatible, simple clipboard manager"
 authors = ["Dustin Pilgrim"]
 license = "MIT"
@@ -44,3 +44,4 @@ regex = "1.11.3"
 tauri-plugin-single-instance = "2.3.4"
 tauri-plugin-store = "2.4.0"
 tauri-plugin-log = "2.7.0"
+tauri-plugin-cli = "2"

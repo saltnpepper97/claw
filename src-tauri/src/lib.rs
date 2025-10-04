@@ -11,10 +11,11 @@ use tauri::{
     generate_handler,
     menu::{Menu, MenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter, Manager, Listener
 };
 use theme::Theme;
 use tokio::sync::RwLock;
+use tauri_plugin_cli::CliExt;
 
 use commands::{
     clear_clipboard_history, get_claw_config, get_clipboard_history, get_history_stats,
@@ -93,10 +94,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_cli::init())
         .setup(|app| {
             let app_handle = app.handle();
 
+            // Parse CLI arguments
+            let cli_matches = app.cli().matches()?;
+            let should_show_window = cli_matches.args.get("show").is_some();
+
             let main_window = app.get_webview_window("main").unwrap();
+            
+            // Always start hidden unless --show flag is present
+            if should_show_window {
+                let _ = main_window.show();
+                let _ = main_window.set_focus();
+            } else {
+                // Explicitly hide the window on startup
+                let _ = main_window.hide();
+            }
+
             main_window.on_window_event({
                 let app_handle = app_handle.clone();
                 move |event| {
@@ -153,6 +169,15 @@ pub fn run() {
                                         let entries = hist.get_entries(Some(5));
                                         if let Some(entry) = entries.get(idx) {
                                             let _ = crate::clipboard::set_clipboard(&entry.content);
+                                            // Immediately re-add to history to move it to the front
+                                            let _ = crate::history::add_to_history(
+                                                &app_handle,
+                                                entry.content.clone(),
+                                                entry.content_type.clone(),
+                                                100,
+                                            );
+                                            // Emit event to update frontend and tray
+                                            let _ = app_handle.emit("history-updated", "");
                                         }
                                     }
                                 }
@@ -178,6 +203,18 @@ pub fn run() {
 
             // Update tray menu with history
             let _ = update_tray_menu(&app_handle, tray_id);
+
+            // --- Listen for history updates to refresh tray menu ---
+            {
+                let app_handle_for_listener = app_handle.clone();
+                let tray_id_for_listener = tray_id.to_string();
+                app_handle.listen("history-updated", move |_event| {
+                    println!("History updated event received, refreshing tray menu");
+                    if let Err(e) = update_tray_menu(&app_handle_for_listener, &tray_id_for_listener) {
+                        eprintln!("Failed to update tray menu: {}", e);
+                    }
+                });
+            }
 
             // Load config once at startup
             let claw_config = Arc::new(RwLock::new(load_claw_config()));
