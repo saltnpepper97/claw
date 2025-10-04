@@ -98,20 +98,17 @@ pub fn run() {
         .setup(|app| {
             let app_handle = app.handle();
 
+            let main_window = app.get_webview_window("main").unwrap();
+
             // Parse CLI arguments
             let cli_matches = app.cli().matches()?;
-            let should_show_window = cli_matches.args.get("show").is_some();
+            let should_show_window = cli_matches.args.get("hide").is_some();
 
-            let main_window = app.get_webview_window("main").unwrap();
-            
             // Always start hidden unless --show flag is present
-            if should_show_window {
-                let _ = main_window.show();
-                let _ = main_window.set_focus();
-            } else {
-                // Explicitly hide the window on startup
-                let _ = main_window.hide();
-            }
+            if !should_show_window {
+                main_window.show().ok();
+                main_window.set_focus().ok();
+            } 
 
             main_window.on_window_event({
                 let app_handle = app_handle.clone();
