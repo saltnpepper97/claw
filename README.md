@@ -7,6 +7,12 @@
  <em>Crustacean powered clipboard for X11 & Wayland</em>
 </p>
 
+## Demo
+
+<p align=center>
+  <img src="images/claw.gif" alt="Claw Demo" width="450" />
+</p>
+
 ## Features
 - **Cross-platform** design (X11 `xclip`/Wayland `wl_clipboard`)
 - **Window Manager** friendly (Keyboard driven interface)
