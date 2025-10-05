@@ -92,7 +92,13 @@ fn update_tray_menu(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.unminimize(); 
+            }
+        }))
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_cli::init())
         .setup(|app| {
@@ -102,13 +108,13 @@ pub fn run() {
 
             // Parse CLI arguments
             let cli_matches = app.cli().matches()?;
-            let should_show_window = cli_matches.args.get("hide").is_some();
+            let should_hide = cli_matches.args.contains_key("hide") && 
+                              cli_matches.args.get("hide").unwrap().value.as_bool().unwrap_or(false);
 
-            // Always start hidden unless --show flag is present
-            if !should_show_window {
-                main_window.show().ok();
-                main_window.set_focus().ok();
-            } 
+
+            if should_hide {
+                main_window.hide().ok();
+            }
 
             main_window.on_window_event({
                 let app_handle = app_handle.clone();

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "claw",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "claw",
   "build": {
     "frontendDist": "../build",
@@ -18,7 +18,7 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
-        "visible": false
+        "visible": true
       }
     ],
     "security": {
@@ -46,7 +46,8 @@
       "args": [
         {
           "name": "hide",
-          "description": "Hide the window on startup"
+          "description": "Hide the window on startup",
+          "takesValue": false
         }
       ]
     }

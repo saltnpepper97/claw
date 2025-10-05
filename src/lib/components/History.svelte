@@ -145,6 +145,7 @@
         border-width: 1px 0 1px 0;
         transition: background-color 150ms ease, border-color 150ms ease;
         position: relative;
+        outline: none
     }
 
     .history-item.selected {
