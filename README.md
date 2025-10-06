@@ -7,6 +7,14 @@
  <em>Crustacean powered clipboard for X11 & Wayland</em>
 </p>
 
+<div align=center>
+  <img src="https://img.shields.io/badge/pnpm-%234a4a4a.svg?style=for-the-badge&logo=pnpm&logoColor=f69220" alt="PNPM Badge">
+  <img src="https://img.shields.io/badge/svelte-%23f1413d.svg?style=for-the-badge&logo=svelte&logoColor=white" alt="Svelte Badge">
+  <img src="https://img.shields.io/badge/Tauri-FFC131?style=for-the-badge&logo=Tauri&logoColor=white" alt="Tauri Badge">
+  <img src="https://img.shields.io/badge/vite-%23646CFF.svg?style=for-the-badge&logo=vite&logoColor=white" alt="Vite Badge">
+  <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/saltnpepper97/claw?style=for-the-badge&color=4caf50">
+</div>
+
 ## Demo
 
 <p align=center>
