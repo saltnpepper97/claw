@@ -8,9 +8,10 @@ use tauri_plugin_store::StoreBuilder;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardEntry {
     pub id: String,
-    pub content: String,
+    pub content: Vec<u8>,
     pub timestamp: DateTime<Utc>,
-    pub content_type: String, // "text", "image", etc.
+    pub content_type: String,
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,7 +24,7 @@ impl Default for ClipboardHistory {
     fn default() -> Self {
         Self {
             entries: VecDeque::new(),
-            max_entries: 100, // Default max entries
+            max_entries: 100,
         }
     }
 }
@@ -37,8 +38,8 @@ impl ClipboardHistory {
         }
     }
 
-    pub fn add_entry(&mut self, content: String, content_type: String) {
-        // Don't add if it's the same as the last entry
+    pub fn add_entry(&mut self, content: Vec<u8>, content_type: String, source_path: Option<String>) {
+        // Don't add if identical to last entry
         if let Some(last) = self.entries.front() {
             if last.content == content {
                 return;
@@ -50,11 +51,11 @@ impl ClipboardHistory {
             content,
             timestamp: Utc::now(),
             content_type,
+            source_path,
         };
 
         self.entries.push_front(entry);
 
-        // Remove oldest entries if we exceed max_entries
         while self.entries.len() > self.max_entries {
             self.entries.pop_back();
         }
@@ -94,14 +95,18 @@ pub fn load_history(
 
     let mut history = match store.get(HISTORY_KEY) {
         Some(value) => {
-            let h: ClipboardHistory = serde_json::from_value(value.clone())
-                .map_err(|e| format!("Failed to deserialize history: {}", e))?;
-            h
+            // Try to deserialize with new format
+            match serde_json::from_value::<ClipboardHistory>(value.clone()) {
+                Ok(h) => h,
+                Err(_) => {
+                    eprintln!("Old history format detected, starting fresh");
+                    ClipboardHistory::new(max_entries)
+                }
+            }
         }
         None => ClipboardHistory::new(max_entries),
     };
 
-    // always respect current max_entries
     history.max_entries = max_entries;
     Ok(history)
 }
@@ -124,11 +129,12 @@ pub fn save_history(app_handle: &AppHandle, history: &ClipboardHistory) -> Resul
 
 pub fn add_to_history(
     app_handle: &AppHandle,
-    content: String,
+    content: &[u8],
     content_type: String,
     max_entries: usize,
+    source_path: Option<String>
 ) -> Result<(), String> {
     let mut history = load_history(app_handle, max_entries)?;
-    history.add_entry(content, content_type);
+    history.add_entry(content.to_vec(), content_type, source_path);
     save_history(app_handle, &history)
 }

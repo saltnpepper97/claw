@@ -4,8 +4,13 @@ import { currentClipboard, history, message, newText } from '$lib/stores/history
 
 export interface ClipboardEntry {
     id: string;
-    content: string;
+    content: number[];  // Changed from string to byte array
     timestamp: string;
+    content_type: string;
+}
+
+export interface ClipboardData {
+    content: number[];
     content_type: string;
 }
 
@@ -14,7 +19,7 @@ export class ClipboardService {
         return await invoke('set_system_clipboard', { text });
     }
 
-    static async getClipboard(): Promise<string> {
+    static async getClipboard(): Promise<ClipboardData> {
         return await invoke('get_system_clipboard');
     }
 
@@ -35,9 +40,21 @@ export class ClipboardService {
     }
 }
 
+// Helper to decode bytes to text
+function bytesToText(bytes: number[]): string {
+    const uint8Array = new Uint8Array(bytes);
+    const decoder = new TextDecoder('utf-8');
+    return decoder.decode(uint8Array);
+}
+
 export async function getCurrentClipboard() {
     try {
-        currentClipboard.set(await ClipboardService.getClipboard());
+        const data = await ClipboardService.getClipboard();
+        if (data.content_type === 'text') {
+            currentClipboard.set(bytesToText(data.content));
+        } else {
+            currentClipboard.set(`[${data.content_type}]`);
+        }
         message.set('Got current clipboard content');
     } catch (error) {
         message.set(`Failed to get clipboard: ${error}`);
@@ -59,17 +76,27 @@ export async function setClipboard() {
         await ClipboardService.setClipboard(get(newText));
         message.set('Clipboard set successfully!');
         newText.set('');
-        await loadHistory(); // Refresh history
+        await loadHistory();
     } catch (error) {
         message.set(`Failed to set clipboard: ${error}`);
     }
 }
 
-
 export async function useFromHistory(entry: ClipboardEntry) {
     try {
         await ClipboardService.setFromHistory(entry.id);
-        message.set(`Set clipboard to: ${entry.content.substring(0, 30)}...`);
+        
+        // Create appropriate message based on content type
+        let preview: string;
+        if (entry.content_type.startsWith('image/')) {
+            preview = `Image (${entry.content_type})`;
+        } else {
+            const text = bytesToText(entry.content);
+            preview = text.substring(0, 30);
+            if (text.length > 30) preview += '...';
+        }
+        
+        message.set(`Set clipboard to: ${preview}`);
         await loadHistory();
     } catch (error) {
         message.set(`Failed to use from history: ${error}`);
@@ -103,4 +130,3 @@ export function formatDate(timestamp: string) {
 export function truncate(text: string, length: number = 50) {
     return text.length > length ? text.substring(0, length) + '...' : text;
 }
-

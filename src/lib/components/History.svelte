@@ -11,7 +11,6 @@
     let historyContainer: HTMLElement | null = $state(null);
     let unlisten = $state();
 
-    // Function to scroll the selected item into view
     function scrollToSelected() {
         if (historyContainer && selectedIndex >= 0) {
             const selectedItem = historyContainer.querySelector(`[data-index="${selectedIndex}"]`) as HTMLElement;
@@ -53,10 +52,25 @@
         }
     }
 
+    function isImage(contentType: string): boolean {
+        return contentType.startsWith('image/');
+    }
+
+    function getImageDataUrl(content: number[], contentType: string): string {
+        const uint8Array = new Uint8Array(content);
+        const base64 = btoa(String.fromCharCode(...uint8Array));
+        return `data:${contentType};base64,${base64}`;
+    }
+
+    function getTextContent(content: number[]): string {
+        const uint8Array = new Uint8Array(content);
+        const decoder = new TextDecoder('utf-8');
+        return decoder.decode(uint8Array);
+    }
+
     onMount(() => {
         loadKeybindsFromBackend();
         loadHistory();
-        // Select first item in the list the list isn't empty
         if ($history.length > 0 && selectedIndex == -1) {
           selectedIndex = 0;
           setTimeout(scrollToSelected, 0);
@@ -93,7 +107,16 @@
                 }}
             >
                 <div class="content">
-                    <div class="text">{truncate(entry.content)}</div>
+                    {#if isImage(entry.content_type)}
+                        <div class="image-preview">
+                            <img 
+                                src={getImageDataUrl(entry.content, entry.content_type)} 
+                                alt="Clipboard image"
+                            />
+                        </div>
+                    {:else}
+                        <div class="text">{truncate(getTextContent(entry.content))}</div>
+                    {/if}
                     <div class="meta">
                         <span class="date">{formatDate(entry.timestamp)}</span>
                         <span class="type">{entry.content_type}</span>
@@ -179,6 +202,24 @@
 
     .history-item.selected .text {
         color: var(--selected-foreground);
+    }
+
+    .image-preview {
+        margin-bottom: 8px;
+        border-radius: 3px;
+        overflow: hidden;
+        max-height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--background-alt);
+    }
+
+    .image-preview img {
+        max-width: 100%;
+        max-height: 200px;
+        object-fit: contain;
+        display: block;
     }
 
     .meta {

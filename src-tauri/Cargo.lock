@@ -677,13 +677,14 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "claw"
-version = "1.0.3"
+version = "1.0.5"
 dependencies = [
  "chrono",
  "dirs",
  "eyre",
  "log",
  "notify",
+ "once_cell",
  "regex",
  "rune-cfg",
  "serde",
@@ -695,6 +696,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
  "tokio",
+ "url",
  "uuid",
  "wl-clipboard-rs",
  "x11-clipboard",

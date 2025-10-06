@@ -4,18 +4,25 @@ mod config;
 mod detect;
 mod history;
 mod theme;
+mod utils;
 
+use std::sync::{Arc, Mutex};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::sync::Arc;
+use once_cell::sync::Lazy;
 use tauri::{
     generate_handler,
     menu::{Menu, MenuItem, Submenu},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, Listener
 };
-use theme::Theme;
-use tokio::sync::RwLock;
 use tauri_plugin_cli::CliExt;
+use tokio::sync::RwLock;
+use history::ClipboardEntry;
+
+use theme::Theme;
+use utils::{detect_content_type, normalize_clipboard_bytes};
+
+static LAST_WRITTEN_CLIPBOARD: Lazy<Mutex<Option<u64>>> = Lazy::new(|| Mutex::new(None));
 
 use commands::{
     clear_clipboard_history, get_claw_config, get_clipboard_history, get_history_stats,
@@ -57,7 +64,9 @@ fn update_tray_menu(
         let mut history_items = Vec::new();
 
         for (idx, entry) in recent_items.iter().enumerate() {
-            let display_text = truncate_text(&entry.content.replace('\n', " "), 50);
+            // Handle different content types 
+            let display_text = clipboard_entry_label(entry);
+            
             let item_id = format!("history_{}", idx);
             let menu_item = MenuItem::with_id(app, &item_id, display_text, true, None::<&str>)?;
             history_items.push(menu_item);
@@ -154,7 +163,6 @@ pub fn run() {
                                 app.exit(0);
                             }
                             "clear_history" => {
-                                // Clear history
                                 if let Ok(mut hist) = history::load_history(&app_handle, 100) {
                                     hist.clear();
                                     let _ = history::save_history(&app_handle, &hist);
@@ -164,23 +172,14 @@ pub fn run() {
                                 }
                             }
                             id if id.starts_with("history_") => {
-                                // Extract index and set clipboard
                                 if let Ok(idx) =
                                     id.strip_prefix("history_").unwrap().parse::<usize>()
                                 {
                                     if let Ok(hist) = history::load_history(&app_handle, 100) {
                                         let entries = hist.get_entries(Some(5));
                                         if let Some(entry) = entries.get(idx) {
+                                            // Set clipboard with raw bytes - watcher will handle history
                                             let _ = crate::clipboard::set_clipboard(&entry.content);
-                                            // Immediately re-add to history to move it to the front
-                                            let _ = crate::history::add_to_history(
-                                                &app_handle,
-                                                entry.content.clone(),
-                                                entry.content_type.clone(),
-                                                100,
-                                            );
-                                            // Emit event to update frontend and tray
-                                            let _ = app_handle.emit("history-updated", "");
                                         }
                                     }
                                 }
@@ -204,7 +203,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Update tray menu with history
             let _ = update_tray_menu(&app_handle, tray_id);
 
             // --- Listen for history updates to refresh tray menu ---
@@ -219,7 +217,6 @@ pub fn run() {
                 });
             }
 
-            // Load config once at startup
             let claw_config = Arc::new(RwLock::new(load_claw_config()));
             app.manage(claw_config.clone());
 
@@ -243,33 +240,75 @@ pub fn run() {
                 let app_handle = app_handle.clone();
                 let claw_config = claw_config.clone();
                 tauri::async_runtime::spawn(async move {
-                    use tokio::time::{sleep, Duration};
-
-                    let mut last_content = String::new();
                     loop {
-                        let history_limit = claw_config.read().await.0.history_limit as usize;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-                        if let Ok(content) = crate::clipboard::get_clipboard() {
-                            if !content.is_empty() && content != last_content {
-                                last_content = content.clone();
+                        if let Ok(content_bytes) = crate::clipboard::get_clipboard() {
+                            // Skip obviously invalid clipboard data using centralized function
+                            if crate::clipboard::should_ignore_bytes(&content_bytes) {
+                                continue;
+                            }
 
-                                if let Err(e) = crate::history::add_to_history(
-                                    &app_handle,
-                                    content.clone(),
-                                    "text".to_string(),
-                                    history_limit,
-                                ) {
-                                    eprintln!("Failed to add to history: {}", e);
+                            // Normalize bytes
+                            let normalized_bytes = normalize_clipboard_bytes(&content_bytes);
+                            if normalized_bytes.is_empty() || crate::clipboard::should_ignore_bytes(&normalized_bytes) {
+                                continue;
+                            }
+
+                            // Compute hash of normalized bytes
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+
+                            let mut hasher = DefaultHasher::new();
+                            normalized_bytes.hash(&mut hasher);
+                            let content_hash = hasher.finish();
+
+                            let history_limit = claw_config.read().await.0.history_limit as usize;
+
+                            let skip = {
+                                let last_written = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
+                                if Some(content_hash) == *last_written {
+                                    true
+                                } else if let Ok(history) = crate::history::load_history(&app_handle, history_limit) {
+                                    if let Some(last_entry) = history.entries.front() {
+                                        let mut entry_hasher = DefaultHasher::new();
+                                        last_entry.content.hash(&mut entry_hasher);
+                                        entry_hasher.finish() == content_hash
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
                                 }
+                            };
+                            if skip { continue; }
 
-                                let _ = app_handle.emit("history-updated", &content);
+                            *crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap() = Some(content_hash);
 
-                                // Update tray menu with new history
-                                let _ = update_tray_menu(&app_handle, "claw-tray");
+
+                            let source_path = {
+                                let text = String::from_utf8_lossy(&normalized_bytes);
+                                if text.starts_with("file://") || text.starts_with("http://") || text.starts_with("https://") {
+                                    Some(text.to_string())
+                                } else {
+                                    None
+                                }
+                            };
+
+
+                            // Add to history
+                            if let Err(e) = crate::history::add_to_history(
+                                &app_handle,
+                                &normalized_bytes,
+                                detect_content_type(&normalized_bytes),
+                                history_limit,
+                                source_path,
+                            ) {
+                                eprintln!("Failed to add to history: {}", e);
+                            } else {
+                                let _ = app_handle.emit("history-updated", "");
                             }
                         }
-
-                        sleep(Duration::from_millis(550)).await;
                     }
                 });
             }
@@ -287,11 +326,9 @@ pub fn run() {
                     let main_config_path: PathBuf =
                         config::find_config().expect("No claw.rune config found");
 
-                    // Set of all watched paths
                     let mut watched_paths = HashSet::new();
                     watched_paths.insert(main_config_path.clone());
 
-                    // Helper to find gathered files (non-aliased) so we can watch them too
                     let gather_paths = || -> Vec<PathBuf> {
                         let content =
                             std::fs::read_to_string(&main_config_path).unwrap_or_default();
@@ -399,4 +436,51 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn human_size(bytes: &[u8]) -> String {
+    let kb = bytes.len() as f64 / 1024.0;
+    if kb < 1024.0 {
+        format!("{:.0} KB", kb)
+    } else {
+        format!("{:.1} MB", kb / 1024.0)
+    }
+}
+
+fn image_menu_label(entry: &ClipboardEntry) -> String {
+    if let Some(src) = &entry.source_path {
+        if src.starts_with("file://") {
+            let path = &src[7..];
+            if let Some(fname) = std::path::Path::new(path).file_name() {
+                return format!("🖼️ {} ({})", fname.to_string_lossy(), human_size(&entry.content));
+            }
+        } else if let Ok(url) = url::Url::parse(src) {
+            let host = url.host_str().unwrap_or("web");
+            let filename = url
+                .path_segments()
+                .and_then(|s| s.last())
+                .unwrap_or("image");
+            return format!("🖼️ {} / {} ({})", host, filename, human_size(&entry.content));
+        }
+    }
+
+    // Fallback for images with no source
+    format!("🖼️ Image ({})", human_size(&entry.content))
+}
+
+fn sanitize_for_menu(text: &str) -> String {
+    text.replace('\0', "").replace('\n', " ")
+}
+
+fn clipboard_entry_label(entry: &ClipboardEntry) -> String {
+    if entry.content_type.starts_with("image/") {
+        image_menu_label(entry)
+    } else if entry.content_type == "text" {
+        match String::from_utf8(entry.content.clone()) {
+            Ok(text) => truncate_text(&sanitize_for_menu(&text), 50),
+            Err(_) => "Binary data".to_string(),
+        }
+    } else {
+        format!("Binary ({})", entry.content_type)
+    }
 }

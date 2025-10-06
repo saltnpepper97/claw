@@ -3,39 +3,68 @@ use tauri::{command, AppHandle, Emitter, State};
 use tokio::sync::RwLock;
 use crate::clipboard::{get_clipboard, set_clipboard};
 use crate::config::ClipboardConfig;
-use crate::history::{add_to_history, load_history, save_history, ClipboardEntry};
+use crate::history::{load_history, save_history, ClipboardEntry};
 use crate::theme::Theme;
+use crate::detect_content_type;
 
 #[command]
 pub async fn set_system_clipboard(
     app_handle: AppHandle,
-    text: String,
+    content: Vec<u8>,
     config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<(), String> {
-    set_clipboard(&text)?;
+    let content_type = detect_content_type(&content);
+
+    // Set clipboard according to type
+    match content_type.as_str() {
+        "text" => set_clipboard(&content)?,
+        t if t.starts_with("image/") => set_clipboard(&content)?,
+        _ => set_clipboard(&content)?,
+    }
+
     let max_entries = config.read().await.0.history_limit as usize;
-    add_to_history(&app_handle, text, "text".to_string(), max_entries)?;
+
+    // Detect source path if content looks like a file
+    let source_path = if content.starts_with(b"file://") {
+        Some(String::from_utf8_lossy(&content[7..]).to_string())
+    } else {
+        None
+    };
+
+    crate::history::add_to_history(
+        &app_handle,
+        &content,
+        content_type,
+        max_entries,
+        source_path,
+    )?;
+
+    // Update tray
     let _ = app_handle.emit("history-updated", "");
     Ok(())
 }
 
+
 #[command]
 pub async fn get_system_clipboard(
-    app_handle: AppHandle,
-    config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
-) -> Result<String, String> {
-    let content = get_clipboard()?;
-    if !content.trim().is_empty() {
-        let max_entries = config.read().await.0.history_limit as usize;
-        add_to_history(
-            &app_handle,
-            content.clone(),
-            "text".to_string(),
-            max_entries,
-        )?;
-        let _ = app_handle.emit("history-updated", "");
+    _app_handle: AppHandle,
+    _config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
+) -> Result<ClipboardData, String> {
+    let bytes = get_clipboard()?;
+    if !bytes.is_empty() {
+        // Detect content type
+        let content_type = detect_content_type(&bytes);
+        
+        Ok(ClipboardData {
+            content: bytes,
+            content_type,
+        })
+    } else {
+        Ok(ClipboardData {
+            content: vec![],
+            content_type: "text".to_string(),
+        })
     }
-    Ok(content)
 }
 
 #[command]
@@ -58,9 +87,17 @@ pub async fn clear_clipboard_history(
     let mut history = load_history(&app_handle, max_entries)?;
     history.clear();
     save_history(&app_handle, &history)?;
+
+    // Reset last-written hash
+    *crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap() = None;
+
+    let _ = crate::clipboard::set_clipboard(&[]);
+
+    // Update tray
     let _ = app_handle.emit("history-updated", "");
     Ok(())
 }
+
 
 #[command]
 pub async fn remove_clipboard_entry(
@@ -72,6 +109,7 @@ pub async fn remove_clipboard_entry(
     let mut history = load_history(&app_handle, max_entries)?;
     let removed = history.remove_entry(&entry_id);
     save_history(&app_handle, &history)?;
+
     let _ = app_handle.emit("history-updated", "");
     Ok(removed)
 }
@@ -86,13 +124,9 @@ pub async fn set_clipboard_from_history(
     let history = load_history(&app_handle, max_entries)?;
     if let Some(entry) = history.entries.iter().find(|e| e.id == entry_id) {
         set_clipboard(&entry.content)?;
-        add_to_history(
-            &app_handle,
-            entry.content.clone(),
-            entry.content_type.clone(),
-            max_entries,
-        )?;
+
         let _ = app_handle.emit("history-updated", "");
+
         Ok(())
     } else {
         Err("Entry not found".to_string())
@@ -118,6 +152,12 @@ pub struct HistoryStats {
     pub max_entries: usize,
 }
 
+#[derive(serde::Serialize)]
+pub struct ClipboardData {
+    pub content: Vec<u8>,
+    pub content_type: String,
+}
+
 #[command]
 pub async fn get_theme(
     claw_config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
@@ -133,3 +173,4 @@ pub async fn get_claw_config(
     let cfg = claw_config.read().await;
     Ok(cfg.0.clone())
 }
+
