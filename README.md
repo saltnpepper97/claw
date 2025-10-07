@@ -50,7 +50,10 @@ paru -S claw
 
 ### Manual Install:
 Grab the latest download from the [releases](https://github.com/saltnpepper97/claw/releases)
-page. If you are on **Debian** you can use the provided `.deb` file.
+page. 
+
+- If you are on **Debian** you can use the provided `.deb` file.
+- If you are on **Fedora** you can use the provided `.rpm` file.
 
 ## Keybinds
 
