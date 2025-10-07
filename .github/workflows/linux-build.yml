@@ -63,5 +63,6 @@ jobs:
         with:
           files: |
             src-tauri/target/release/bundle/deb/*_${{ env.APP_VERSION }}_amd64.deb
+            src-tauri/target/release/bundle/rpm/*-${{ env.APP_VERSION }}-1.x86_64.rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
