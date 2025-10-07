@@ -39,10 +39,11 @@ struct ConfigUpdate {
 }
 
 fn truncate_text(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
+    if text.chars().count() <= max_len {
         text.to_string()
     } else {
-        format!("{}...", &text[..max_len])
+        let truncated: String = text.chars().take(max_len).collect();
+        format!("{}...", truncated)
     }
 }
 
