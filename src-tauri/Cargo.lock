@@ -677,7 +677,7 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "claw"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "chrono",
  "dirs",
