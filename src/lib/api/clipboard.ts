@@ -67,7 +67,7 @@ export async function getCurrentClipboard() {
 
 export async function loadHistory() {
     try {
-        const entries = await ClipboardService.getHistory(20);
+        const entries = await ClipboardService.getHistory();
 
         history.set(entries);
     } catch (error) {
