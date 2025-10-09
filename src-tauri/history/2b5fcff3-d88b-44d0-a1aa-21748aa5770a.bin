@@ -1,0 +1,42 @@
+{#if $history.length === 0}
+    <div class="empty">
+      <p class="empty-txt">No clipboard history yet. Copy something to get started!</p>
+    </div>
+{:else}  
+    <div class="history-list" bind:this={historyContainer}>
+        {#each $history as entry, i (entry.id)}
+            <div 
+                class="history-item {selectedIndex === i ? 'selected' : ''}" 
+                data-index={i} 
+                role="button" 
+                tabindex="0" 
+                onclick={() => { selectedIndex = i; scrollToSelected(); }}
+                onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        if (selectedIndex >= 0) {
+                          useFromHistory($history[selectedIndex]);
+                        }
+                        e.preventDefault();
+                    }
+                }}
+            >
+                <div class="content">
+                    {#if isImage(entry.content_type)}
+                        <div class="image-preview">
+                            <img 
+                                src={getImageDataUrl(entry.content, entry.content_type)} 
+                                alt="Clipboard image"
+                            />
+                        </div>
+                    {:else}
+                        <div class="text">{truncate(getTextContent(entry.content))}</div>
+                    {/if}
+                    <div class="meta">
+                        <span class="date">{formatDate(entry.timestamp)}</span>
+                        <span class="type">{entry.content_type}</span>
+                    </div>
+                </div>
+            </div>
+        {/each}
+    </div>
+{/if}

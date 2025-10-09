@@ -1,0 +1,11 @@
+[Stasis] XDG_CURRENT_DESKTOP detected: niri
+[Stasis] Setting up Wayland idle detection (respect_inhibitors=true)
+[Stasis] Binding ext_idle_notifier_v1
+[Stasis] Binding zwp_idle_inhibit_manager_v1
+[Stasis] Binding wl_seat
+[Stasis] Wayland idle detection active
+[Stasis] Running. Idle actions loaded: 3
+[Stasis] Listening for suspend/resume events...
+[Stasis] Triggering sequence step 0: LockScreen (timeout=300s)
+[Stasis] Lock running; syncing sequence to step 1 (one past lock)
+[Stasis] Triggering sequence step 1: Dpms (timeout=30s)

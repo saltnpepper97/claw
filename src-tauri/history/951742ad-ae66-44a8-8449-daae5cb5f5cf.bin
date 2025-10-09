@@ -1,0 +1,83 @@
+<script lang="ts">
+    import { onMount } from 'svelte';
+    import { history } from '$lib/stores/historyStore';
+    import { showTitlebar } from '$lib/stores/uiStore';
+    import { loadHistory, useFromHistory, removeFromHistory, truncate, formatDate, clearAllHistory } from '$lib/api/clipboard';
+    import { keybinds, loadKeybindsFromBackend, matchKeybind } from '$lib/api/keybinds';
+    import { get } from 'svelte/store';
+    import { listen } from '@tauri-apps/api/event';
+
+    let selectedIndex = $state(-1);
+    let historyContainer: HTMLElement | null = $state(null);
+    let unlisten = $state();
+
+    function scrollToSelected() {
+        if (historyContainer && selectedIndex >= 0) {
+            const selectedItem = historyContainer.querySelector(`[data-index="${selectedIndex}"]`) as HTMLElement;
+            if (selectedItem) {
+                selectedItem.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest',
+                    inline: 'nearest'
+                });
+            }
+        }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+        const kb = get(keybinds);
+        const previousIndex = selectedIndex;
+
+        if (matchKeybind(event, kb.historyUp)) {
+            selectedIndex = Math.max(selectedIndex - 1, 0);
+            event.preventDefault();
+        } else if (matchKeybind(event, kb.historyDown)) {
+            selectedIndex = Math.min(selectedIndex + 1, $history.length - 1);
+            event.preventDefault();
+        } else if (matchKeybind(event, kb.useEntry) && selectedIndex >= 0) {
+            useFromHistory($history[selectedIndex]);
+            event.preventDefault();
+        } else if (matchKeybind(event, kb.removeEntry) && selectedIndex >= 0) {
+            removeFromHistory($history[selectedIndex]);
+            selectedIndex = Math.min(selectedIndex, $history.length - 2);
+            event.preventDefault();
+        } else if (matchKeybind(event, kb.deleteAll)) {
+            clearAllHistory();
+            selectedIndex = -1;
+            event.preventDefault();
+        }
+
+        if (selectedIndex !== previousIndex) {
+            setTimeout(scrollToSelected, 0);
+        }
+    }
+
+    function isImage(contentType: string): boolean {
+        return contentType.startsWith('image/');
+    }
+
+    function getImageDataUrl(content: number[], contentType: string): string {
+        const uint8Array = new Uint8Array(content);
+        const base64 = btoa(String.fromCharCode(...uint8Array));
+        return `data:${contentType};base64,${base64}`;
+    }
+
+    function getTextContent(content: number[]): string {
+        const uint8Array = new Uint8Array(content);
+        const decoder = new TextDecoder('utf-8');
+        return decoder.decode(uint8Array);
+    }
+
+    onMount(() => {
+        loadKeybindsFromBackend();
+        loadHistory();
+        if ($history.length > 0 && selectedIndex == -1) {
+          selectedIndex = 0;
+          setTimeout(scrollToSelected, 0);
+        }
+        
+        unlisten = listen<string>('history-updated', () => {
+            loadHistory();
+        });
+    });
+</script>

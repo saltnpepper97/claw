@@ -27,7 +27,7 @@ static LAST_WRITTEN_CLIPBOARD: Lazy<Mutex<Option<u64>>> = Lazy::new(|| Mutex::ne
 use commands::{
     clear_clipboard_history, get_claw_config, get_clipboard_history, get_history_stats,
     get_system_clipboard, get_theme, remove_clipboard_entry, set_clipboard_from_history,
-    set_system_clipboard,
+    set_system_clipboard, get_clipboard_entry_content
 };
 use config::load_claw_config;
 
@@ -38,13 +38,48 @@ struct ConfigUpdate {
     theme: Theme,
 }
 
-fn truncate_text(text: &str, max_len: usize) -> String {
-    if text.chars().count() <= max_len {
-        text.to_string()
+// ============================================================================
+// UTILITY FUNCTIONS (top)
+// ============================================================================
+
+
+fn human_size_from_bytes(size: usize) -> String {
+    let kb = size as f64 / 1024.0;
+    if kb < 1024.0 {
+        format!("{:.0} KB", kb)
     } else {
-        let truncated: String = text.chars().take(max_len).collect();
-        format!("{}...", truncated)
+        format!("{:.1} MB", kb / 1024.0)
     }
+}
+
+fn clipboard_entry_label_lightweight(entry: &ClipboardEntry) -> String {
+    if entry.content_type.starts_with("image/") {
+        image_menu_label_lightweight(entry)
+    } else if entry.content_type == "text" {
+        format!("📝 Text ({} bytes)", entry.content_size)
+    } else {
+        format!("📎 {} ({} bytes)", entry.content_type, entry.content_size)
+    }
+}
+
+fn image_menu_label_lightweight(entry: &ClipboardEntry) -> String {
+    if let Some(src) = &entry.source_path {
+        if src.starts_with("file://") {
+            let path = &src[7..];
+            if let Some(fname) = std::path::Path::new(path).file_name() {
+                return format!("🖼️ {} ({})", fname.to_string_lossy(), human_size_from_bytes(entry.content_size));
+            }
+        } else if let Ok(url) = url::Url::parse(src) {
+            let host = url.host_str().unwrap_or("web");
+            let filename = url
+                .path_segments()
+                .and_then(|s| s.last())
+                .unwrap_or("image");
+            return format!("🖼️ {} / {} ({})", host, filename, human_size_from_bytes(entry.content_size));
+        }
+    }
+
+    format!("🖼️ Image ({})", human_size_from_bytes(entry.content_size))
 }
 
 fn update_tray_menu(
@@ -53,27 +88,22 @@ fn update_tray_menu(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tray = app.tray_by_id(tray_id).ok_or("Tray not found")?;
 
-    // Load recent history items
     let history = history::load_history(app, 100)?;
     let recent_items = history.get_entries(Some(5));
 
-    // Create menu items
     let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
 
-    // Build menu dynamically based on whether we have history
     let menu = if !recent_items.is_empty() {
         let mut history_items = Vec::new();
 
         for (idx, entry) in recent_items.iter().enumerate() {
-            // Handle different content types 
-            let display_text = clipboard_entry_label(entry);
+            let display_text = clipboard_entry_label_lightweight(&entry);
             
             let item_id = format!("history_{}", idx);
             let menu_item = MenuItem::with_id(app, &item_id, display_text, true, None::<&str>)?;
             history_items.push(menu_item);
         }
 
-        // Create submenu with all history items
         let history_submenu = Submenu::with_items(
             app,
             "Recent Clipboard",
@@ -84,7 +114,6 @@ fn update_tray_menu(
                 .collect::<Vec<_>>(),
         )?;
 
-        // Add clear history button
         let clear_i = MenuItem::with_id(app, "clear_history", "Clear History", true, None::<&str>)?;
         let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
@@ -95,9 +124,15 @@ fn update_tray_menu(
     };
 
     tray.set_menu(Some(menu))?;
+    
+    drop(history);
 
     Ok(())
 }
+
+// ============================================================================
+// MAIN RUN FUNCTION
+// ============================================================================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -120,7 +155,6 @@ pub fn run() {
             let cli_matches = app.cli().matches()?;
             let should_hide = cli_matches.args.contains_key("hide") && 
                               cli_matches.args.get("hide").unwrap().value.as_bool().unwrap_or(false);
-
 
             if should_hide {
                 main_window.hide().ok();
@@ -167,21 +201,23 @@ pub fn run() {
                                 if let Ok(mut hist) = history::load_history(&app_handle, 100) {
                                     hist.clear();
                                     let _ = history::save_history(&app_handle, &hist);
+                                    drop(hist);
                                     let _ = app_handle.emit("history-updated", "");
-                                    // Update tray menu
                                     let _ = update_tray_menu(&app_handle, &tray_id_clone);
                                 }
                             }
                             id if id.starts_with("history_") => {
-                                if let Ok(idx) =
-                                    id.strip_prefix("history_").unwrap().parse::<usize>()
-                                {
+                                if let Ok(idx) = id.strip_prefix("history_").unwrap().parse::<usize>() {
                                     if let Ok(hist) = history::load_history(&app_handle, 100) {
                                         let entries = hist.get_entries(Some(5));
                                         if let Some(entry) = entries.get(idx) {
-                                            // Set clipboard with raw bytes - watcher will handle history
-                                            let _ = crate::clipboard::set_clipboard(&entry.content);
+                                            // Load content on-demand instead of keeping in memory
+                                            if let Some(content) = hist.get_entry_content(&entry.id) {
+                                                let _ = crate::clipboard::set_clipboard(&content);
+                                                drop(content);
+                                            }
                                         }
+                                        drop(hist);
                                     }
                                 }
                             }
@@ -206,12 +242,11 @@ pub fn run() {
 
             let _ = update_tray_menu(&app_handle, tray_id);
 
-            // --- Listen for history updates to refresh tray menu ---
+            // Listen for history updates to refresh tray menu
             {
                 let app_handle_for_listener = app_handle.clone();
                 let tray_id_for_listener = tray_id.to_string();
                 app_handle.listen("history-updated", move |_event| {
-                    println!("History updated event received, refreshing tray menu");
                     if let Err(e) = update_tray_menu(&app_handle_for_listener, &tray_id_for_listener) {
                         eprintln!("Failed to update tray menu: {}", e);
                     }
@@ -221,7 +256,7 @@ pub fn run() {
             let claw_config = Arc::new(RwLock::new(load_claw_config()));
             app.manage(claw_config.clone());
 
-            // --- Emit initial config to frontend ---
+            // Emit initial config to frontend
             {
                 let app_handle = app_handle.clone();
                 let claw_config = claw_config.clone();
@@ -236,85 +271,75 @@ pub fn run() {
                 });
             }
 
-            // --- Clipboard watcher task ---
+            // Clipboard watcher task
             {
                 let app_handle = app_handle.clone();
                 let claw_config = claw_config.clone();
                 tauri::async_runtime::spawn(async move {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+
+                    let mut interval_ms = 500u64;
+
                     loop {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(interval_ms)).await;
 
-                        if let Ok(content_bytes) = crate::clipboard::get_clipboard() {
-                            // Skip obviously invalid clipboard data using centralized function
-                            if crate::clipboard::should_ignore_bytes(&content_bytes) {
-                                continue;
-                            }
+                        let Ok(content_bytes) = crate::clipboard::get_clipboard() else {
+                            interval_ms = 1500;
+                            continue;
+                        };
 
-                            // Normalize bytes
-                            let normalized_bytes = normalize_clipboard_bytes(&content_bytes);
-                            if normalized_bytes.is_empty() || crate::clipboard::should_ignore_bytes(&normalized_bytes) {
-                                continue;
-                            }
-
-                            // Compute hash of normalized bytes
-                            use std::collections::hash_map::DefaultHasher;
-                            use std::hash::{Hash, Hasher};
-
-                            let mut hasher = DefaultHasher::new();
-                            normalized_bytes.hash(&mut hasher);
-                            let content_hash = hasher.finish();
-
-                            let history_limit = claw_config.read().await.0.history_limit as usize;
-
-                            let skip = {
-                                let last_written = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
-                                if Some(content_hash) == *last_written {
-                                    true
-                                } else if let Ok(history) = crate::history::load_history(&app_handle, history_limit) {
-                                    if let Some(last_entry) = history.entries.front() {
-                                        let mut entry_hasher = DefaultHasher::new();
-                                        last_entry.content.hash(&mut entry_hasher);
-                                        entry_hasher.finish() == content_hash
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
-                            };
-                            if skip { continue; }
-
-                            *crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap() = Some(content_hash);
-
-
-                            let source_path = {
-                                let text = String::from_utf8_lossy(&normalized_bytes);
-                                if text.starts_with("file://") || text.starts_with("http://") || text.starts_with("https://") {
-                                    Some(text.to_string())
-                                } else {
-                                    None
-                                }
-                            };
-
-
-                            // Add to history
-                            if let Err(e) = crate::history::add_to_history(
-                                &app_handle,
-                                &normalized_bytes,
-                                detect_content_type(&normalized_bytes),
-                                history_limit,
-                                source_path,
-                            ) {
-                                eprintln!("Failed to add to history: {}", e);
-                            } else {
-                                let _ = app_handle.emit("history-updated", "");
-                            }
+                        if crate::clipboard::should_ignore_bytes(&content_bytes) {
+                            drop(content_bytes);
+                            interval_ms = 1500;
+                            continue;
                         }
+
+                        let mut hasher = DefaultHasher::new();
+                        content_bytes.hash(&mut hasher);
+                        let content_hash = hasher.finish();
+
+                        {
+                            let mut last = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
+                            if Some(content_hash) == *last {
+                                drop(content_bytes);
+                                interval_ms = 1000;
+                                continue;
+                            }
+                            *last = Some(content_hash);
+                        }
+
+                        interval_ms = 500;
+
+                        let normalized = normalize_clipboard_bytes(&content_bytes);
+                        drop(content_bytes);
+                        
+                        if normalized.is_empty() || crate::clipboard::should_ignore_bytes(&normalized) {
+                            drop(normalized);
+                            continue;
+                        }
+
+                        let history_limit = claw_config.read().await.0.history_limit as usize;
+                        let content_type = detect_content_type(&normalized);
+                        
+                        if let Err(e) = crate::history::add_to_history(
+                            &app_handle,
+                            &normalized,
+                            content_type,
+                            history_limit,
+                            None,
+                        ) {
+                            eprintln!("Failed to add to history: {}", e);
+                        } else {
+                            let _ = app_handle.emit("history-updated", "");
+                        }
+
+                        drop(normalized);
                     }
                 });
             }
 
-            // --- Config hot-reload task ---
+            // Config hot-reload task
             {
                 let app_handle = app_handle.clone();
                 let claw_config = claw_config.clone();
@@ -353,7 +378,6 @@ pub fn run() {
                             .collect()
                     };
 
-                    // Add gathered paths
                     for path in gather_paths() {
                         watched_paths.insert(path);
                     }
@@ -386,7 +410,6 @@ pub fn run() {
 
                                             let _ = app_handle.emit("config-reloaded", update);
 
-                                            // Rebuild watched paths if new gathers appeared
                                             let new_paths: HashSet<_> =
                                                 gather_paths().into_iter().collect();
                                             for path in new_paths.difference(&watched_paths) {
@@ -428,6 +451,7 @@ pub fn run() {
             set_system_clipboard,
             get_system_clipboard,
             get_clipboard_history,
+            get_clipboard_entry_content,
             clear_clipboard_history,
             remove_clipboard_entry,
             set_clipboard_from_history,
@@ -437,51 +461,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-fn human_size(bytes: &[u8]) -> String {
-    let kb = bytes.len() as f64 / 1024.0;
-    if kb < 1024.0 {
-        format!("{:.0} KB", kb)
-    } else {
-        format!("{:.1} MB", kb / 1024.0)
-    }
-}
-
-fn image_menu_label(entry: &ClipboardEntry) -> String {
-    if let Some(src) = &entry.source_path {
-        if src.starts_with("file://") {
-            let path = &src[7..];
-            if let Some(fname) = std::path::Path::new(path).file_name() {
-                return format!("🖼️ {} ({})", fname.to_string_lossy(), human_size(&entry.content));
-            }
-        } else if let Ok(url) = url::Url::parse(src) {
-            let host = url.host_str().unwrap_or("web");
-            let filename = url
-                .path_segments()
-                .and_then(|s| s.last())
-                .unwrap_or("image");
-            return format!("🖼️ {} / {} ({})", host, filename, human_size(&entry.content));
-        }
-    }
-
-    // Fallback for images with no source
-    format!("🖼️ Image ({})", human_size(&entry.content))
-}
-
-fn sanitize_for_menu(text: &str) -> String {
-    text.replace('\0', "").replace('\n', " ")
-}
-
-fn clipboard_entry_label(entry: &ClipboardEntry) -> String {
-    if entry.content_type.starts_with("image/") {
-        image_menu_label(entry)
-    } else if entry.content_type == "text" {
-        match String::from_utf8(entry.content.clone()) {
-            Ok(text) => truncate_text(&sanitize_for_menu(&text), 50),
-            Err(_) => "Binary data".to_string(),
-        }
-    } else {
-        format!("Binary ({})", entry.content_type)
-    }
 }

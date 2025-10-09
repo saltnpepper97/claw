@@ -96,8 +96,10 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
 
     for mime in &mimes {
         if let Ok((mut pipe, _)) = get_contents(ClipboardType::Regular, Seat::Unspecified, *mime) {
-            let mut bytes = Vec::new();
-            if pipe.read_to_end(&mut bytes).is_ok() && !bytes.is_empty() {
+            let mut bytes = Vec::with_capacity(1024);
+            let _ = pipe.read_to_end(&mut bytes);
+            drop(pipe); // explicitly close the pipe immediately
+            if !bytes.is_empty() {
                 // Normalize small artifacts immediately
                 if should_ignore_bytes(&bytes) {
                     continue;
@@ -132,6 +134,9 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
             }
         }
     }
+
+    // Force file descriptors closed
+    std::fs::File::open("/dev/null").ok();
 
     if let Some(img) = candidate_image {
         return Ok(img);
