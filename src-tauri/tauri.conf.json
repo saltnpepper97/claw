@@ -48,6 +48,11 @@
           "name": "hide",
           "description": "Hide the window on startup",
           "takesValue": false
+        },
+        {
+          "name": "toggle",
+          "description": "Toggle to show/hide claw",
+          "takesValue": false
         }
       ]
     }

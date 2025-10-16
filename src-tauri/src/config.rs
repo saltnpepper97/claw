@@ -1,5 +1,6 @@
-use eyre::Result;
+use eyre::{Result, eyre};
 use std::path::{Path, PathBuf};
+use std::process;
 
 use crate::theme::{find_theme_file, Theme};
 use rune_cfg::RuneConfig;
@@ -22,99 +23,17 @@ pub struct ClipboardConfig {
     pub keybinds: Keybinds,
 }
 
-// --- Helpers ---
-fn try_get_string(config: &RuneConfig, base_path: &str) -> Option<String> {
-    let hyphenated = base_path.replace('_', "-");
-    if let Ok(val) = config.get::<String>(&hyphenated) {
-        return Some(val);
-    }
-    let underscored = base_path.replace('-', "_");
-    if let Ok(val) = config.get::<String>(&underscored) {
-        return Some(val);
-    }
-    None
-}
-
-fn try_get_bool(config: &RuneConfig, base_path: &str, default: bool) -> bool {
-    let hyphenated = base_path.replace('_', "-");
-    if let Ok(val) = config.get::<bool>(&hyphenated) {
-        return val;
-    }
-    let underscored = base_path.replace('-', "_");
-    if let Ok(val) = config.get::<bool>(&underscored) {
-        return val;
-    }
-    default
-}
-
-fn try_get_number(config: &RuneConfig, base_path: &str, default: u64) -> u64 {
-    let hyphenated = base_path.replace('_', "-");
-    if let Ok(val) = config.get::<u64>(&hyphenated) {
-        return val;
-    }
-    let underscored = base_path.replace('-', "_");
-    if let Ok(val) = config.get::<u64>(&underscored) {
-        return val;
-    }
-    default
-}
-
 // --- Load Config ---
 pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
-    let content = std::fs::read_to_string(path)?;
-    let mut config = RuneConfig::from_str(&content)?;
-
-    let gather_regex =
-        regex::Regex::new(r#"(?m)^[ \t]*gather\s+"([^"]+)"(?:\s+as\s+(\w+))?"#).unwrap();
-
-    let mut non_aliased_imports = Vec::new();
-
-    for cap in gather_regex.captures_iter(&content) {
-        let gather_path = &cap[1];
-        let alias = cap.get(2).map(|m| m.as_str());
-
-        let expanded_path = if gather_path.starts_with("~/") {
-            if let Some(home) = dirs::home_dir() {
-                home.join(&gather_path[2..]).to_string_lossy().to_string()
-            } else {
-                gather_path.to_string()
-            }
-        } else {
-            gather_path.to_string()
-        };
-
-        if Path::new(&expanded_path).exists() {
-            if let Some(alias_name) = alias {
-                // Aliased import - inject as separate document
-                let imported_cfg = RuneConfig::from_file(&expanded_path)?;
-                if let Some(imported_doc) = imported_cfg.document() {
-                    config.inject_import(alias_name.to_string(), imported_doc.clone());
-                }
-            } else {
-                // Non-aliased import - collect for merging
-                non_aliased_imports.push(expanded_path);
-            }
-        }
-    }
-
-    // Process non-aliased imports by merging their content
-    if !non_aliased_imports.is_empty() {
-        let mut merged_content = content.clone();
-        for import_path in non_aliased_imports {
-            let import_content = std::fs::read_to_string(&import_path)?;
-            merged_content.push_str("\n");
-            merged_content.push_str(&import_content);
-        }
-        config = RuneConfig::from_str(&merged_content)?;
-    }
-
-    let aliases = config.import_aliases();
+    let config = RuneConfig::from_file(path)
+        .map_err(|e| eyre!("Failed to load config: {}", e))?;
 
     // Load the theme block with priority system
     let theme = {
         let mut loaded_theme = None;
 
         // PRIORITY 1: Check for aliased gather imports (gather "path" as alias)
+        let aliases = config.import_aliases();
         for alias in aliases {
             if config.has_document(&alias) {
                 let test_path = format!("{}.theme.light.background", alias);
@@ -134,7 +53,7 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
 
         // PRIORITY 3: Check for clipboard.theme field
         if loaded_theme.is_none() {
-            if let Some(theme_name) = try_get_string(&config, "clipboard.theme") {
+            if let Ok(theme_name) = config.get::<String>("clipboard.theme") {
                 // Try to find and load the theme file
                 if let Some(theme_path) = find_theme_file(&theme_name) {
                     if let Ok(theme_cfg) = RuneConfig::from_file(&theme_path) {
@@ -153,19 +72,18 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
         loaded_theme.unwrap_or_else(|| Theme::default())
     };
 
-    // Load clipboard config
-    let history_limit = try_get_number(&config, "clipboard.history-max-length", 50);
-    let enable_titlebar = try_get_bool(&config, "clipboard.enable-titlebar", true);
-    let force_dark_mode = try_get_bool(&config, "clipboard.force-dark-mode", false);
+    // Load clipboard config with proper validation
+    let history_limit = config.get_or("clipboard.history_max_length", 50u64);
+    let enable_titlebar = config.get_or("clipboard.enable_titlebar", true);
+    let force_dark_mode = config.get_or("clipboard.force_dark_mode", false);
 
-    let keybinds_path = "clipboard.keybinds";
+    // Load keybinds
     let keybinds = Keybinds {
-        up: try_get_string(&config, &format!("{}.up", keybinds_path)).unwrap_or_default(),
-        down: try_get_string(&config, &format!("{}.down", keybinds_path)).unwrap_or_default(),
-        delete: try_get_string(&config, &format!("{}.delete", keybinds_path)).unwrap_or_default(),
-        delete_all: try_get_string(&config, &format!("{}.delete_all", keybinds_path))
-            .unwrap_or_default(),
-        select: try_get_string(&config, &format!("{}.select", keybinds_path)).unwrap_or_default(),
+        up: config.get_or("clipboard.keybinds.up", String::new()),
+        down: config.get_or("clipboard.keybinds.down", String::new()),
+        delete: config.get_or("clipboard.keybinds.delete", String::new()),
+        delete_all: config.get_or("clipboard.keybinds.delete_all", String::new()),
+        select: config.get_or("clipboard.keybinds.select", String::new()),
     };
 
     let clipboard = ClipboardConfig {
@@ -195,7 +113,14 @@ pub fn find_config() -> Option<PathBuf> {
     None
 }
 
+/// Top-level config loader that exits gracefully on failure.
 pub fn load_claw_config() -> (ClipboardConfig, Theme) {
     let path = find_config().expect("No claw.rune config found");
-    load_config(&path.to_string_lossy()).expect("Failed to parse claw.rune config")
+    match load_config(&path.to_string_lossy()) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            eprintln!("❌ Configuration error:\n{}", err);
+            process::exit(1);
+        }
+    }
 }

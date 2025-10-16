@@ -3480,9 +3480,9 @@ dependencies = [
 
 [[package]]
 name = "rune-cfg"
-version = "0.1.2"
+version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a447bf6b4f953899df19e588ecdf583960c120661b4e358ca1d93bd23a7af0c"
+checksum = "600c2dcacccd65a235318eea77d2a4d32ee6dc97c3744b6b790ed1796e456798"
 dependencies = [
  "once_cell",
  "serde",
