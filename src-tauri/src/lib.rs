@@ -147,17 +147,11 @@ fn update_tray_menu(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // Handle --toggle flag for subsequent instances
-            if args.contains(&"--toggle".to_string()) {
-                toggle_main_window(app);
-            } else {
-                // Default behavior: show and focus
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = window.unminimize(); 
-                }
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.unminimize(); 
             }
         }))
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -167,10 +161,21 @@ pub fn run() {
 
             let main_window = app.get_webview_window("main").unwrap();
 
-            // Parse CLI arguments for first instance
+            // Parse CLI arguments
             let cli_matches = app.cli().matches()?;
-            
-            // Check for --hide flag
+
+            if cli_matches.args.contains_key("toggle") {
+                if let Some(window) = app.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                // prevent starting a new instance; exit after toggling
+                std::process::exit(0);
+            }
             let should_hide = cli_matches.args.contains_key("hide") && 
                               cli_matches.args.get("hide").unwrap().value.as_bool().unwrap_or(false);
 

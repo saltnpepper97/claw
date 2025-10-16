@@ -77,13 +77,13 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
     let enable_titlebar = config.get_or("clipboard.enable_titlebar", true);
     let force_dark_mode = config.get_or("clipboard.force_dark_mode", false);
 
-    // Load keybinds
+    // Load keybinds with proper defaults
     let keybinds = Keybinds {
-        up: config.get_or("clipboard.keybinds.up", String::new()),
-        down: config.get_or("clipboard.keybinds.down", String::new()),
-        delete: config.get_or("clipboard.keybinds.delete", String::new()),
-        delete_all: config.get_or("clipboard.keybinds.delete_all", String::new()),
-        select: config.get_or("clipboard.keybinds.select", String::new()),
+        up: config.get_or("clipboard.keybinds.up", "ArrowUp".to_string()),
+        down: config.get_or("clipboard.keybinds.down", "ArrowDown".to_string()),
+        delete: config.get_or("clipboard.keybinds.delete", "X".to_string()),
+        delete_all: config.get_or("clipboard.keybinds.delete_all", "shift+X".to_string()),
+        select: config.get_or("clipboard.keybinds.select", "Enter".to_string()),
     };
 
     let clipboard = ClipboardConfig {
