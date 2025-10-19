@@ -118,14 +118,16 @@
 </svelte:head>
 
 <div class="layout" class:no-titlebar={!$showTitlebar}>
-  {#if $showTitlebar}
-    <div 
-      class="titlebar-wrapper"
-      transition:slide={{ duration: 250, easing: cubicOut, axis: 'y' }}
-    >
-      <Titlebar />
-    </div>
-  {/if}
+  <div class="titlebar-wrapper">
+    {#if $showTitlebar}
+      <div 
+        class="titlebar-content"
+        transition:slide={{ duration: 250, easing: cubicOut, axis: 'y' }}
+      >
+        <Titlebar />
+      </div>
+    {/if}
+  </div>
   <Statusbar />
   {@render children?.()}
 </div>
@@ -135,15 +137,14 @@
     display: grid;
     grid-template-rows: auto auto 1fr;
     height: 100%;
-    will-change: grid-template-rows;
-  }
-
-  .layout.no-titlebar {
-    grid-template-rows: auto 1fr;
   }
 
   .titlebar-wrapper {
     overflow: hidden;
+    min-height: 0;
+  }
+
+  .titlebar-content {
     will-change: transform, opacity;
   }
 </style>
