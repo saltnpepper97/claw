@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tauri::{command, AppHandle, Emitter, State};
 use tokio::sync::RwLock;
-use crate::clipboard::{get_clipboard, set_clipboard};
+use crate::clipboard::{get_clipboard, set_clipboard, cache_clipboard_data};
 use crate::config::ClipboardConfig;
 use crate::history::{load_history, save_history, ClipboardEntry, ClipboardHistory};
 use crate::theme::Theme;
@@ -16,6 +16,9 @@ pub async fn set_system_clipboard(
     let content = text.as_bytes().to_vec();
     let content_type = detect_content_type(&content);
 
+    // Cache it in persistent memory before setting
+    cache_clipboard_data(&content);
+    
     set_clipboard(&content)?;
 
     let max_entries = config.read().await.0.history_limit as usize;
@@ -44,6 +47,12 @@ pub async fn get_system_clipboard(
     _config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<ClipboardData, String> {
     let bytes = get_clipboard()?;
+    
+    // Cache whatever we get
+    if !bytes.is_empty() {
+        cache_clipboard_data(&bytes);
+    }
+    
     if !bytes.is_empty() {
         let content_type = detect_content_type(&bytes);
         
@@ -137,6 +146,9 @@ pub async fn set_clipboard_from_history(
     let history = load_history(&app_handle, max_entries)?;
 
     if let Some(content) = history.get_entry_content(&entry_id) {
+        // IMPORTANT: Cache before setting so it survives if source closes
+        cache_clipboard_data(&content);
+        
         set_clipboard(&content)?;
         // Explicitly drop content after use
         drop(content);

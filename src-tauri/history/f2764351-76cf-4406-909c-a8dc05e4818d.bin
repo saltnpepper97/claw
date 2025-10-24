@@ -1,0 +1,25 @@
+pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
+    let content_type = detect_content_type(data);
+    
+    let mime_type = if content_type.starts_with("image/") {
+        match content_type.as_str() {
+            "image/png" => MimeType::Specific("image/png".into()),
+            "image/jpeg" => MimeType::Specific("image/jpeg".into()),
+            "image/gif" => MimeType::Specific("image/gif".into()),
+            "image/webp" => MimeType::Specific("image/webp".into()),
+            "image/bmp" => MimeType::Specific("image/bmp".into()),
+            _ => MimeType::Autodetect,
+        }
+    } else {
+        MimeType::Autodetect
+    };
+
+    let opts = Options::new();
+    let manager = opts.copy(Source::Bytes(data.into()), mime_type)
+        .map_err(|e| e.to_string())?;
+    
+    // Store the manager to keep clipboard ownership alive
+    *WAYLAND_CLIPBOARD_OWNER.lock().unwrap() = Some(manager);
+    
+    Ok(())
+}

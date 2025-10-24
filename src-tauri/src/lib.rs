@@ -308,6 +308,8 @@ pub fn run() {
                             continue;
                         };
 
+                        crate::clipboard::cache_clipboard_data(&content_bytes);
+
                         if crate::clipboard::should_ignore_bytes(&content_bytes) {
                             drop(content_bytes);
                             interval_ms = 1500;

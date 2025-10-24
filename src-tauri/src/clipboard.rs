@@ -3,18 +3,23 @@ use std::io::Read;
 use std::sync::Mutex;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use once_cell::sync::Lazy;
-use wl_clipboard_rs::copy::{MimeType, Options, Source};
+use wl_clipboard_rs::copy::{MimeType, Source};
 use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeType, Seat};
 use x11_clipboard::Clipboard as X11Clipboard;
 use crate::{LAST_WRITTEN_CLIPBOARD, detect_content_type};
 use crate::normalize_clipboard_bytes;
 
-// Keep a global Wayland clipboard owner alive
-static WAYLAND_CLIPBOARD_OWNER: Lazy<Mutex<Options>> = Lazy::new(|| Mutex::new(Options::new()));
+// CRITICAL: Keep the most recent clipboard data in memory
+// This acts as a clipboard manager - even if the source app closes,
+// we can still serve this content
+static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 
 /// Set Wayland clipboard
 pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
     let content_type = detect_content_type(data);
+    
+    // ALWAYS store the most recent data in memory
+    *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
     
     let mime_type = if content_type.starts_with("image/") {
         match content_type.as_str() {
@@ -29,14 +34,14 @@ pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
         MimeType::Autodetect
     };
 
-    let opts = WAYLAND_CLIPBOARD_OWNER.lock().unwrap();
-    opts.clone().copy(Source::Bytes(data.into()), mime_type)
+    // Try to set system clipboard, but don't fail if it doesn't work
+    // The important thing is we have it in memory
+    wl_clipboard_rs::copy::Options::new()
+        .copy(Source::Bytes(data.into()), mime_type)
         .map_err(|e| e.to_string())
 }
 
 /// Check if bytes should be ignored (0,0 or <meta> artifacts)
-/// This now normalizes text payloads (removes NULs and trims ASCII whitespace)
-/// so we catch variants like "0,0\n" or "0,0\0".
 pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
@@ -57,7 +62,7 @@ pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
     let mut clean = bytes
         .iter()
         .cloned()
-        .filter(|&b| b != 0) // remove NUL
+        .filter(|&b| b != 0)
         .collect::<Vec<u8>>();
     while !clean.is_empty() && (clean.first().unwrap().is_ascii_whitespace()) {
         clean.remove(0);
@@ -81,8 +86,9 @@ pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
     false
 }
 
-/// Get Wayland clipboard with robust filtering: prefer images, but carefully handle text offers.
+/// Get Wayland clipboard with fallback to persistent memory
 pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
+    // First try to get from actual clipboard
     let mimes = [
         PasteMimeType::Text,
         PasteMimeType::Specific("image/png".into()),
@@ -98,14 +104,12 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
         if let Ok((mut pipe, _)) = get_contents(ClipboardType::Regular, Seat::Unspecified, *mime) {
             let mut bytes = Vec::with_capacity(1024);
             let _ = pipe.read_to_end(&mut bytes);
-            drop(pipe); // explicitly close the pipe immediately
+            drop(pipe);
             if !bytes.is_empty() {
-                // Normalize small artifacts immediately
                 if should_ignore_bytes(&bytes) {
                     continue;
                 }
 
-                // For text MIME, ensure we don't prematurely return tiny artifacts
                 if *mime == PasteMimeType::Text {
                     let mut clean = bytes.clone().into_iter().filter(|&b| b != 0).collect::<Vec<u8>>();
                     while !clean.is_empty() && clean.first().unwrap().is_ascii_whitespace() {
@@ -118,14 +122,14 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
                         continue;
                     }
                     if let Ok(_) = String::from_utf8(clean.clone()) {
+                        // Store it in memory too
+                        *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(clean.clone());
                         return Ok(clean);
                     }
                     continue;
                 }
 
-                // For image MIME offers, double-check it's an image before selecting as candidate
                 if detect_content_type(&bytes).starts_with("image/") {
-                    // guard against tiny bogus image blobs
                     if bytes.len() < 100 {
                         continue;
                     }
@@ -135,19 +139,27 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
         }
     }
 
-    // Force file descriptors closed
     std::fs::File::open("/dev/null").ok();
 
     if let Some(img) = candidate_image {
+        // Store it in memory too
+        *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(img.clone());
         return Ok(img);
+    }
+
+    // FALLBACK: Return from memory if clipboard is empty
+    if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
+        return Ok(data.clone());
     }
 
     Ok(vec![])
 }
 
-
 /// Set X11 clipboard
 pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
+    // Store in memory first
+    *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
+    
     let clipboard =
         X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
     clipboard
@@ -160,19 +172,31 @@ pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Get X11 clipboard
+/// Get X11 clipboard with fallback
 pub fn get_x11_clipboard_bytes() -> Result<Vec<u8>, String> {
     let clipboard =
         X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
-    let contents = clipboard
-        .load(
-            clipboard.getter.atoms.clipboard,
-            clipboard.getter.atoms.incr,
-            clipboard.getter.atoms.property,
-            std::time::Duration::from_secs(3),
-        )
-        .map_err(|e| format!("Failed to get X11 clipboard: {}", e))?;
-    Ok(contents)
+    
+    match clipboard.load(
+        clipboard.getter.atoms.clipboard,
+        clipboard.getter.atoms.incr,
+        clipboard.getter.atoms.property,
+        std::time::Duration::from_secs(3),
+    ) {
+        Ok(contents) => {
+            // Store it in memory too
+            *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(contents.clone());
+            Ok(contents)
+        },
+        Err(_) => {
+            // Fallback to persistent memory if clipboard load fails
+            if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
+                Ok(data.clone())
+            } else {
+                Ok(vec![])
+            }
+        }
+    }
 }
 
 /// Set clipboard based on current environment
@@ -194,24 +218,33 @@ pub fn set_clipboard(data: &[u8]) -> Result<(), String> {
     }
 }
 
-
 /// Get clipboard based on current environment
 pub fn get_clipboard() -> Result<Vec<u8>, String> {
-    // First, attempt Wayland, then X11 if unknown or fails
     let bytes = match crate::detect::current_desktop_env() {
         DesktopEnv::Wayland => get_wayland_clipboard_bytes(),
         DesktopEnv::X11 => get_x11_clipboard_bytes(),
         DesktopEnv::Unknown => get_wayland_clipboard_bytes().or_else(|_| get_x11_clipboard_bytes()),
     }?;
 
-    // Immediately discard junk
-    if bytes.is_empty() || should_ignore_bytes(&bytes) {
+    // If we got empty bytes from system clipboard, check persistent memory
+    if bytes.is_empty() {
+        if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
+            return Ok(data.clone());
+        }
+    }
+
+    if should_ignore_bytes(&bytes) {
+        // Even if bytes are garbage, check if we have good data in memory
+        if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
+            if !should_ignore_bytes(data) {
+                return Ok(data.clone());
+            }
+        }
         return Ok(vec![]);
     }
 
     let content_type = detect_content_type(&bytes);
 
-    // Images take absolute priority
     if content_type.starts_with("image/") {
         return Ok(bytes);
     }
@@ -227,6 +260,20 @@ pub fn get_clipboard() -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Get the most recent clipboard item from persistent memory
+/// This is useful when the clipboard is empty but we have data stored
+#[allow(dead_code)]
+pub fn get_persistent_clipboard() -> Option<Vec<u8>> {
+    PERSISTENT_CLIPBOARD_DATA.lock().unwrap().clone()
+}
+
+/// Store clipboard data in persistent memory without setting system clipboard
+/// Used by the watcher to cache detected clipboard content
+pub fn cache_clipboard_data(data: &[u8]) {
+    if !data.is_empty() && !should_ignore_bytes(data) {
+        *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
+    }
+}
 
 #[allow(dead_code)]
 pub fn set_clipboard_text(text: &str) -> Result<(), String> {
@@ -238,4 +285,3 @@ pub fn get_clipboard_text() -> Result<String, String> {
     let bytes = get_clipboard()?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
 }
-
