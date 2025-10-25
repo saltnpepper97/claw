@@ -9,16 +9,12 @@ use x11_clipboard::Clipboard as X11Clipboard;
 use crate::{LAST_WRITTEN_CLIPBOARD, detect_content_type};
 use crate::normalize_clipboard_bytes;
 
-// CRITICAL: Keep the most recent clipboard data in memory
-// This acts as a clipboard manager - even if the source app closes,
-// we can still serve this content
 static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 
 /// Set Wayland clipboard
 pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
     let content_type = detect_content_type(data);
     
-    // ALWAYS store the most recent data in memory
     *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
     
     let mime_type = if content_type.starts_with("image/") {
@@ -34,8 +30,6 @@ pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
         MimeType::Autodetect
     };
 
-    // Try to set system clipboard, but don't fail if it doesn't work
-    // The important thing is we have it in memory
     wl_clipboard_rs::copy::Options::new()
         .copy(Source::Bytes(data.into()), mime_type)
         .map_err(|e| e.to_string())

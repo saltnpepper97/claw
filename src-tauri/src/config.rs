@@ -47,7 +47,6 @@ where
     default
 }
 
-
 // --- Load Config ---
 pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
     let config = RuneConfig::from_file(path)

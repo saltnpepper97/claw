@@ -299,9 +299,10 @@ pub fn run() {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
 
-                    let mut poll_interval_ms = 300u64;  // How often to check for NEW clipboard changes
+                    let mut poll_interval_ms = 300u64;
                     let mut last_seen_hash: Option<u64> = None;
                     let mut last_reinject_time = std::time::Instant::now();
+                    let mut consecutive_empty_reads = 0u32;
 
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval_ms)).await;
@@ -311,32 +312,58 @@ pub fn run() {
                             continue;
                         };
 
+                        // Check if clipboard is empty/invalid
                         if crate::clipboard::should_ignore_bytes(&content_bytes) {
+                            consecutive_empty_reads += 1;
+                            
+                            // After 3 empty reads, try to restore from persistent memory
+                            if consecutive_empty_reads >= 3 {
+                                if let Some(persistent_data) = crate::clipboard::get_persistent_clipboard() {
+                                    if !crate::clipboard::should_ignore_bytes(&persistent_data) {
+                                        eprintln!("Clipboard lost, restoring from persistent memory");
+                                        let _ = crate::clipboard::set_clipboard(&persistent_data);
+                                        
+                                        // Update hash to match restored content
+                                        let mut hasher = DefaultHasher::new();
+                                        persistent_data.hash(&mut hasher);
+                                        last_seen_hash = Some(hasher.finish());
+                                        last_reinject_time = std::time::Instant::now();
+                                        consecutive_empty_reads = 0;
+                                    }
+                                }
+                            }
+                            
                             drop(content_bytes);
                             poll_interval_ms = 1000;
                             continue;
                         }
 
+                        // Reset empty counter - we have valid content
+                        consecutive_empty_reads = 0;
+
                         let mut hasher = DefaultHasher::new();
                         content_bytes.hash(&mut hasher);
                         let content_hash = hasher.finish();
 
+                        // Same content as before - just maintain it
                         if Some(content_hash) == last_seen_hash {
                             let elapsed = last_reinject_time.elapsed();
-                            if elapsed.as_secs() >= 2 {  // Re-inject every 2 seconds
+                            if elapsed.as_secs() >= 2 {
                                 let _ = crate::clipboard::set_clipboard(&content_bytes);
                                 last_reinject_time = std::time::Instant::now();
                             }
                             drop(content_bytes);
-                            poll_interval_ms = 300;  // Check frequently for new changes
+                            poll_interval_ms = 300;
                             continue;
                         }
 
+                        // New content detected
                         last_seen_hash = Some(content_hash);
                         last_reinject_time = std::time::Instant::now();
 
                         crate::clipboard::cache_clipboard_data(&content_bytes);
 
+                        // Check if this is content WE just wrote
                         {
                             let mut last = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
                             if Some(content_hash) == *last {
@@ -375,7 +402,7 @@ pub fn run() {
                         drop(normalized);
                     }
                 });
-            }   
+            }
 
             // Config hot-reload task
             {
