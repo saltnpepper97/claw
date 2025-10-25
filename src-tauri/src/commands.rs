@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tauri::{command, AppHandle, Emitter, State};
 use tokio::sync::RwLock;
-use crate::clipboard::{get_clipboard, set_clipboard, cache_clipboard_data};
+use crate::clipboard::{get_clipboard_for_paste, set_clipboard, cache_clipboard_data};
 use crate::config::ClipboardConfig;
 use crate::history::{load_history, save_history, ClipboardEntry, ClipboardHistory};
 use crate::theme::Theme;
@@ -46,21 +46,22 @@ pub async fn get_system_clipboard(
     _app_handle: AppHandle,
     _config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<ClipboardData, String> {
-    let bytes = get_clipboard()?;
+    eprintln!("=== get_system_clipboard command called ===");
     
-    // Cache whatever we get
-    if !bytes.is_empty() {
-        cache_clipboard_data(&bytes);
-    }
+    let bytes = get_clipboard_for_paste()?;
+    
+    eprintln!("Got {} bytes from get_clipboard_for_paste", bytes.len());
     
     if !bytes.is_empty() {
         let content_type = detect_content_type(&bytes);
+        eprintln!("Content type: {}", content_type);
         
         Ok(ClipboardData {
             content: bytes,
             content_type,
         })
     } else {
+        eprintln!("Bytes are empty, returning empty clipboard");
         Ok(ClipboardData {
             content: vec![],
             content_type: "text".to_string(),
@@ -146,7 +147,6 @@ pub async fn set_clipboard_from_history(
     let history = load_history(&app_handle, max_entries)?;
 
     if let Some(content) = history.get_entry_content(&entry_id) {
-        // IMPORTANT: Cache before setting so it survives if source closes
         cache_clipboard_data(&content);
         
         set_clipboard(&content)?;

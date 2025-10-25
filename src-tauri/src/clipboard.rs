@@ -86,7 +86,7 @@ pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
     false
 }
 
-/// Get Wayland clipboard with fallback to persistent memory
+/// Get Wayland clipboard - reads from system (for watcher to detect new copies)
 pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
     // First try to get from actual clipboard
     let mimes = [
@@ -172,7 +172,7 @@ pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Get X11 clipboard with fallback
+/// Get X11 clipboard - reads from system (for watcher to detect new copies)
 pub fn get_x11_clipboard_bytes() -> Result<Vec<u8>, String> {
     let clipboard =
         X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
@@ -219,6 +219,7 @@ pub fn set_clipboard(data: &[u8]) -> Result<(), String> {
 }
 
 /// Get clipboard based on current environment
+/// Used by watcher to detect new clipboard changes from other apps
 pub fn get_clipboard() -> Result<Vec<u8>, String> {
     let bytes = match crate::detect::current_desktop_env() {
         DesktopEnv::Wayland => get_wayland_clipboard_bytes(),
@@ -260,6 +261,44 @@ pub fn get_clipboard() -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Get clipboard for frontend - ALWAYS returns from persistent memory
+/// This ensures the most recent clipboard entry survives even if source app closes
+pub fn get_clipboard_for_paste() -> Result<Vec<u8>, String> {
+    eprintln!("=== get_clipboard_for_paste called ===");
+    
+    // ALWAYS return from persistent memory - this is what user last copied
+    if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
+        eprintln!("Persistent memory has {} bytes", data.len());
+        
+        if should_ignore_bytes(data) {
+            eprintln!("Data should be ignored");
+            return Ok(vec![]);
+        }
+
+        let content_type = detect_content_type(data);
+        eprintln!("Content type: {}", content_type);
+
+        if content_type.starts_with("image/") {
+            return Ok(data.clone());
+        }
+
+        if content_type == "text" {
+            if let Ok(text) = String::from_utf8(data.clone()) {
+                eprintln!("Returning text: {}", text.chars().take(50).collect::<String>());
+                return Ok(normalize_clipboard_bytes(text.as_bytes()));
+            } else {
+                eprintln!("Failed to decode as UTF-8");
+                return Ok(vec![]);
+            }
+        }
+
+        Ok(data.clone())
+    } else {
+        eprintln!("Persistent memory is empty!");
+        Ok(vec![])
+    }
+}
+
 /// Get the most recent clipboard item from persistent memory
 /// This is useful when the clipboard is empty but we have data stored
 #[allow(dead_code)]
@@ -269,10 +308,15 @@ pub fn get_persistent_clipboard() -> Option<Vec<u8>> {
 
 /// Store clipboard data in persistent memory without setting system clipboard
 /// Used by the watcher to cache detected clipboard content
+/// CRITICAL: Only caches if we actually have valid NEW data
+/// Never overwrites good data with empty/invalid data
 pub fn cache_clipboard_data(data: &[u8]) {
+    // Only cache if it's valid, non-empty data
     if !data.is_empty() && !should_ignore_bytes(data) {
         *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
     }
+    // If data is empty/invalid, DON'T touch persistent memory
+    // This preserves the last good clipboard entry
 }
 
 #[allow(dead_code)]

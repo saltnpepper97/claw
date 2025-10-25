@@ -235,6 +235,7 @@ pub fn run() {
                                         if let Some(entry) = entries.get(idx) {
                                             // Load content on-demand instead of keeping in memory
                                             if let Some(content) = hist.get_entry_content(&entry.id) {
+                                                crate::clipboard::cache_clipboard_data(&content);
                                                 let _ = crate::clipboard::set_clipboard(&content);
                                                 drop(content);
                                             }
@@ -298,21 +299,21 @@ pub fn run() {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
 
-                    let mut interval_ms = 500u64;
+                    let mut poll_interval_ms = 300u64;  // How often to check for NEW clipboard changes
+                    let mut last_seen_hash: Option<u64> = None;
+                    let mut last_reinject_time = std::time::Instant::now();
 
                     loop {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(interval_ms)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval_ms)).await;
 
                         let Ok(content_bytes) = crate::clipboard::get_clipboard() else {
-                            interval_ms = 1500;
+                            poll_interval_ms = 1000;
                             continue;
                         };
 
-                        crate::clipboard::cache_clipboard_data(&content_bytes);
-
                         if crate::clipboard::should_ignore_bytes(&content_bytes) {
                             drop(content_bytes);
-                            interval_ms = 1500;
+                            poll_interval_ms = 1000;
                             continue;
                         }
 
@@ -320,17 +321,33 @@ pub fn run() {
                         content_bytes.hash(&mut hasher);
                         let content_hash = hasher.finish();
 
+                        if Some(content_hash) == last_seen_hash {
+                            let elapsed = last_reinject_time.elapsed();
+                            if elapsed.as_secs() >= 2 {  // Re-inject every 2 seconds
+                                let _ = crate::clipboard::set_clipboard(&content_bytes);
+                                last_reinject_time = std::time::Instant::now();
+                            }
+                            drop(content_bytes);
+                            poll_interval_ms = 300;  // Check frequently for new changes
+                            continue;
+                        }
+
+                        last_seen_hash = Some(content_hash);
+                        last_reinject_time = std::time::Instant::now();
+
+                        crate::clipboard::cache_clipboard_data(&content_bytes);
+
                         {
                             let mut last = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
                             if Some(content_hash) == *last {
                                 drop(content_bytes);
-                                interval_ms = 1000;
+                                poll_interval_ms = 300;
                                 continue;
                             }
                             *last = Some(content_hash);
                         }
 
-                        interval_ms = 500;
+                        poll_interval_ms = 300;
 
                         let normalized = normalize_clipboard_bytes(&content_bytes);
                         drop(content_bytes);
@@ -358,7 +375,7 @@ pub fn run() {
                         drop(normalized);
                     }
                 });
-            }
+            }   
 
             // Config hot-reload task
             {
@@ -483,3 +500,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+

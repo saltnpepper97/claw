@@ -51,10 +51,8 @@ impl ClipboardHistory {
             return;
         }
 
-        // Don't add if identical to last entry (compare hash, not full content)
         if let Some(last) = self.entries.front() {
             if last.content_size == content.len() {
-                // Quick size check before loading content
                 if let Some(last_content) = self.get_entry_content_internal(&last.id) {
                     if last_content == content {
                         return;
@@ -73,13 +71,11 @@ impl ClipboardHistory {
             content_size,
         };
 
-        // Save the content to disk immediately
         if let Err(e) = self.save_entry_content(&entry) {
             eprintln!("Failed to save clipboard content: {}", e);
             return;
         }
 
-        // Clear content from memory - IMPORTANT: don't keep it
         let mut entry_for_memory = entry;
         entry_for_memory.content = Vec::new(); // Free the Vec
         entry_for_memory.content.shrink_to_fit(); // Release capacity
