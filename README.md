@@ -25,7 +25,7 @@
 </p>
 
 ## Features
-- **Cross-platform** design (X11 `xclip`/Wayland `wl_clipboard`)
+- **Cross-platform** designed for X11 `xclip` & Wayland `wl_clipboard`
 - **Window Manager** friendly (Keyboard driven interface)
 - **Clipboard History** with configurable limit
 - **System Tray Integration** with quick access to recent items

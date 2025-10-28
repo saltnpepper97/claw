@@ -646,7 +646,7 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "claw"
-version = "1.2.2"
+version = "1.2.21"
 dependencies = [
  "chrono",
  "dirs",
@@ -3322,9 +3322,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.11.3"
+version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b5288124840bee7b386bc413c487869b360b2b4ec421ea56425128692f2a82c"
+checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3334,9 +3334,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.11"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "833eb9ce86d40ef33cb1306d8accf7bc8ec2bfea4355cbdebb3df68b40925cad"
+checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -4218,9 +4218,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-cli"
-version = "2.4.0"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53e76101cc9848adfb6a04aae48a389062be457a785bb4349ae1423ddab5a82d"
+checksum = "28e78fb2c09a81546bcd376d34db4bda5769270d00990daa9f0d6e7ac1107e25"
 dependencies = [
  "clap",
  "log",
@@ -4233,9 +4233,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-log"
-version = "2.7.0"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c1438bc7662acd16d508c919b3c087efd63669a4c75625dff829b1c75975ec"
+checksum = "d5709c792b8630290b5d9811a1f8fe983dd925fc87c7fc7f4923616458cd00b6"
 dependencies = [
  "android_logger",
  "byte-unit",
@@ -4255,9 +4255,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-single-instance"
-version = "2.3.4"
+version = "2.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb9cac815bf11c4a80fb498666bcdad66d65b89e3ae24669e47806febb76389c"
+checksum = "dd707f8c86b4e3004e2c141fa24351f1909ba40ce1b8437e30d5ed5277dd3710"
 dependencies = [
  "serde",
  "serde_json",
@@ -4270,9 +4270,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-store"
-version = "2.4.0"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d85dd80d60a76ee2c2fdce09e9ef30877b239c2a6bb76e6d7d03708aa5f13a19"
+checksum = "59a77036340a97eb5bbe1b3209c31e5f27f75e6f92a52fd9dd4b211ef08bf310"
 dependencies = [
  "dunce",
  "serde",
