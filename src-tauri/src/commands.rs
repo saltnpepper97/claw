@@ -16,9 +16,7 @@ pub async fn set_system_clipboard(
     let content = text.as_bytes().to_vec();
     let content_type = detect_content_type(&content);
 
-    // Cache it in persistent memory before setting
     cache_clipboard_data(&content);
-    
     set_clipboard(&content)?;
 
     let max_entries = config.read().await.0.history_limit as usize;
@@ -46,22 +44,16 @@ pub async fn get_system_clipboard(
     _app_handle: AppHandle,
     _config: State<'_, Arc<RwLock<(ClipboardConfig, Theme)>>>,
 ) -> Result<ClipboardData, String> {
-    eprintln!("=== get_system_clipboard command called ===");
-    
     let bytes = get_clipboard_for_paste()?;
-    
-    eprintln!("Got {} bytes from get_clipboard_for_paste", bytes.len());
     
     if !bytes.is_empty() {
         let content_type = detect_content_type(&bytes);
-        eprintln!("Content type: {}", content_type);
         
         Ok(ClipboardData {
             content: bytes,
             content_type,
         })
     } else {
-        eprintln!("Bytes are empty, returning empty clipboard");
         Ok(ClipboardData {
             content: vec![],
             content_type: "text".to_string(),
@@ -78,7 +70,6 @@ pub async fn get_clipboard_history(
     let max_entries = config.read().await.0.history_limit as usize;
     let history = load_history(&app_handle, max_entries)?;
     
-    // Return entries WITHOUT content (content field is already empty)
     Ok(history.get_entries(limit))
 }
 
@@ -112,7 +103,6 @@ pub async fn clear_clipboard_history(
     
     save_history(&app_handle, &ClipboardHistory::default())?;
     
-    // Explicitly drop to free memory
     drop(history);
 
     crate::clipboard::set_clipboard(&[])?;
@@ -148,9 +138,7 @@ pub async fn set_clipboard_from_history(
 
     if let Some(content) = history.get_entry_content(&entry_id) {
         cache_clipboard_data(&content);
-        
         set_clipboard(&content)?;
-        // Explicitly drop content after use
         drop(content);
         let _ = app_handle.emit("history-updated", "");
         Ok(())

@@ -15,7 +15,6 @@ pub struct ClipboardEntry {
     pub timestamp: DateTime<Utc>,
     pub content_type: String,
     pub source_path: Option<String>,
-    // Store size instead of content
     pub content_size: usize,
     #[serde(skip)]
     pub content: Vec<u8>,
@@ -36,6 +35,20 @@ impl Default for ClipboardHistory {
     }
 }
 
+/// Get the history directory path (~/.cache/claw/)
+fn get_history_dir() -> PathBuf {
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("claw");
+    
+    // Ensure directory exists
+    if !cache_dir.exists() {
+        let _ = fs::create_dir_all(&cache_dir);
+    }
+    
+    cache_dir
+}
+
 impl ClipboardHistory {
     pub fn new(max_entries: usize) -> Self {
         Self {
@@ -47,7 +60,6 @@ impl ClipboardHistory {
     pub fn add_entry(&mut self, content: Vec<u8>, content_type: String, source_path: Option<String>) {
         // Skip oversized entries
         if content.len() > MAX_ENTRY_SIZE {
-            eprintln!("Skipping entry: size {} exceeds limit", content.len());
             return;
         }
 
@@ -71,18 +83,16 @@ impl ClipboardHistory {
             content_size,
         };
 
-        if let Err(e) = self.save_entry_content(&entry) {
-            eprintln!("Failed to save clipboard content: {}", e);
+        if let Err(_) = self.save_entry_content(&entry) {
             return;
         }
 
         let mut entry_for_memory = entry;
-        entry_for_memory.content = Vec::new(); // Free the Vec
-        entry_for_memory.content.shrink_to_fit(); // Release capacity
+        entry_for_memory.content = Vec::new();
+        entry_for_memory.content.shrink_to_fit();
 
         self.entries.push_front(entry_for_memory);
 
-        // Remove old entries and clean up their files
         while self.entries.len() > self.max_entries {
             if let Some(old_entry) = self.entries.pop_back() {
                 self.delete_entry_file(&old_entry.id);
@@ -93,14 +103,13 @@ impl ClipboardHistory {
     fn save_entry_content(&self, entry: &ClipboardEntry) -> std::io::Result<()> {
         if !entry.content.is_empty() {
             let path = self.get_entry_path(&entry.id);
-            fs::create_dir_all("history")?;
             fs::write(path, &entry.content)?;
         }
         Ok(())
     }
 
     fn get_entry_path(&self, id: &str) -> PathBuf {
-        PathBuf::from("history").join(format!("{}.bin", id))
+        get_history_dir().join(format!("{}.bin", id))
     }
 
     fn delete_entry_file(&self, id: &str) {
@@ -111,7 +120,7 @@ impl ClipboardHistory {
     }
 
     fn load_entry_content_from_disk(entry_id: &str) -> std::io::Result<Vec<u8>> {
-        let path = PathBuf::from("history").join(format!("{}.bin", entry_id));
+        let path = get_history_dir().join(format!("{}.bin", entry_id));
         if path.exists() {
             fs::read(path)
         } else {
@@ -130,22 +139,18 @@ impl ClipboardHistory {
     }
 
     pub fn clear(&mut self) {
-        // Delete all entry files
         for entry in &self.entries {
             self.delete_entry_file(&entry.id);
         }
         self.entries.clear();
-        self.entries.shrink_to_fit(); // Release memory
+        self.entries.shrink_to_fit();
     }
 
-    // Internal method that doesn't cache
     fn get_entry_content_internal(&self, id: &str) -> Option<Vec<u8>> {
         Self::load_entry_content_from_disk(id).ok()
     }
 
-    // Public method for API calls - loads fresh from disk each time
     pub fn get_entry_content(&self, id: &str) -> Option<Vec<u8>> {
-        // Verify entry exists
         if !self.entries.iter().any(|e| e.id == id) {
             return None;
         }
@@ -176,10 +181,7 @@ pub fn load_history(
         Some(value) => {
             match serde_json::from_value::<ClipboardHistory>(value.clone()) {
                 Ok(h) => h,
-                Err(_) => {
-                    eprintln!("Old history format detected, starting fresh");
-                    ClipboardHistory::new(max_entries)
-                }
+                Err(_) => ClipboardHistory::new(max_entries)
             }
         }
         None => ClipboardHistory::new(max_entries),
@@ -187,7 +189,6 @@ pub fn load_history(
 
     history.max_entries = max_entries;
     
-    // Ensure no content is in memory
     for entry in &mut history.entries {
         entry.content = Vec::new();
         entry.content.shrink_to_fit();
@@ -223,7 +224,6 @@ pub fn add_to_history(
     history.add_entry(content.to_vec(), content_type, source_path);
     save_history(app_handle, &history)?;
     
-    // Explicitly drop to free memory
     drop(history);
     Ok(())
 }
