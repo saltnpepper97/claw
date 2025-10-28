@@ -6,8 +6,8 @@ use once_cell::sync::Lazy;
 use wl_clipboard_rs::copy::{MimeType, Source};
 use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeType, Seat};
 use x11_clipboard::Clipboard as X11Clipboard;
-use crate::{LAST_WRITTEN_CLIPBOARD, detect_content_type};
-use crate::normalize_clipboard_bytes;
+use crate::LAST_WRITTEN_CLIPBOARD;
+use crate::utils::{detect_content_type, normalize_clipboard_bytes};
 
 static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 

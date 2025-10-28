@@ -5,7 +5,7 @@ use crate::clipboard::{get_clipboard_for_paste, set_clipboard, cache_clipboard_d
 use crate::config::ClipboardConfig;
 use crate::history::{load_history, save_history, ClipboardEntry, ClipboardHistory};
 use crate::theme::Theme;
-use crate::detect_content_type;
+use crate::utils::detect_content_type;
 
 #[command]
 pub async fn set_system_clipboard(
