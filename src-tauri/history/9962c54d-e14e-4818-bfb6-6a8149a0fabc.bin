@@ -1,5 +1,0 @@
-[Stasis] Running. Idle actions loaded: 3
-[Stasis] Listening for suspend/resume events...
-[Stasis] Triggering sequence step 0: LockScreen (timeout=300s)
-[Stasis] Lock running; syncing sequence to step 1 (one past lock)
-[Stasis] Triggering sequence step 1: Dpms (timeout=30s)

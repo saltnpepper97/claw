@@ -1,3 +1,0 @@
-let opts = WAYLAND_CLIPBOARD_OWNER.lock().unwrap();
-    opts.clone().copy(Source::Bytes(data.into()), mime_type)
-        .map_err(|e| e.to_string())

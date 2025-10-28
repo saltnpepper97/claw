@@ -1,7 +1,0 @@
-Test it locally first:
-
-Make sure history now respects the configured history_limit in claw.rune.
-
-Check both small limits (like 5) and large limits (like 100+) to confirm nothing breaks.
-
-Optional: Add a tiny log or message in the app to confirm it’s using the correct limit. Something

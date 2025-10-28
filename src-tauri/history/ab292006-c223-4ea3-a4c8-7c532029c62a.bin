@@ -1,4 +1,0 @@
-thread 'main' panicked at /home/dustin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-cli-2.8.4/src/helpers/app_paths.rs:136:5:
-Couldn't recognize the current folder as a Tauri project. It must contain a `tauri.conf.json`, `tauri.conf.json5` or `Tauri.toml` file in any subfolder.
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-claw/src-tauri/src on  main [!?] via 🦀 v1.90.0

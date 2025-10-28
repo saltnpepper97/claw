@@ -1,3 +1,0 @@
-if (!entry.content || entry.content.length === 0) {
-            entry.content = await ClipboardService.getClipboardEntryContent(entry.id);
-        }
