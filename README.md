@@ -27,7 +27,7 @@
 ## Features
 - **Cross-platform** designed for X11 `xclip` & Wayland `wl_clipboard`
 - **Window Manager** friendly (Keyboard driven interface)
-- **Clipboard History** with configurable limit
+- **Clipboard History** with configurable limit and persistence
 - **System Tray Integration** with quick access to recent items
 - **Highly** customizable (keybinds, titlebar, force-dark)	
 - **Themeable** with several built-in themes, including:
@@ -88,7 +88,9 @@ clipboard:
     enable_titlebar = true
     # By default Claw persists
     # clipboard history between runs
-    persist-history = false
+    # uncomment the line below to
+    # Clear History between runs
+    # persist-history = false
     force-dark-mode = false
 
     keybinds:
