@@ -1,8 +1,7 @@
 pub fn detect_content_type(bytes: &[u8]) -> String {
     if bytes.len() < 4 {
         return "text".to_string();
-    }
-    
+    } 
     // Check for common image signatures
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         return "image/png".to_string();

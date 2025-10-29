@@ -3,7 +3,7 @@ use tauri::{command, AppHandle, Emitter, State};
 use tokio::sync::RwLock;
 use crate::clipboard::{get_clipboard_for_paste, set_clipboard, cache_clipboard_data};
 use crate::config::ClipboardConfig;
-use crate::history::{load_history, save_history, ClipboardEntry, ClipboardHistory};
+use crate::history::{load_history, save_history, ClipboardEntry};
 use crate::theme::Theme;
 use crate::utils::detect_content_type;
 
@@ -97,15 +97,34 @@ pub async fn clear_clipboard_history(
         let mut last = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
         *last = None;
     }
+    
+    *crate::clipboard::PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = None;
+    
+    // Clear the system clipboard
+    match crate::detect::current_desktop_env() {
+        crate::detect::DesktopEnv::Wayland => {
+            let _ = wl_clipboard_rs::copy::clear(
+                wl_clipboard_rs::copy::ClipboardType::Regular,
+                wl_clipboard_rs::copy::Seat::All
+            );
+        }
+        crate::detect::DesktopEnv::X11 => {
+            let _ = crate::clipboard::set_clipboard_no_hash(b"");
+        }
+        crate::detect::DesktopEnv::Unknown => {
+            let _ = wl_clipboard_rs::copy::clear(
+                wl_clipboard_rs::copy::ClipboardType::Regular,
+                wl_clipboard_rs::copy::Seat::All
+            );
+        }
+    }
 
     let mut history = load_history(&app_handle, max_entries)?;
     history.clear();
     
-    save_history(&app_handle, &ClipboardHistory::default())?;
+    save_history(&app_handle, &history)?;
     
     drop(history);
-
-    crate::clipboard::set_clipboard(&[])?;
 
     let _ = app_handle.emit("history-updated", "");
 

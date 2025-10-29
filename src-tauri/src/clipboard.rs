@@ -9,7 +9,7 @@ use x11_clipboard::Clipboard as X11Clipboard;
 use crate::LAST_WRITTEN_CLIPBOARD;
 use crate::utils::{detect_content_type, normalize_clipboard_bytes};
 
-static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
+pub static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 
 /// Set Wayland clipboard
 pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
@@ -38,35 +38,47 @@ pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
 
 /// Check if bytes should be ignored
 pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
-    if bytes.is_empty() || bytes.len() <= 2 {
+    if bytes.is_empty() {
         return true;
+    }
+
+    // Allow shebang scripts
+    if bytes.starts_with(b"#!") {
+        return false;
     }
 
     if bytes == b"0,0" {
         return true;
     }
 
-    if bytes.starts_with(b"file://") || bytes.starts_with(b"<meta") {
+    // Allow file:// URIs (file copies), but reject junk
+    if bytes.starts_with(b"file://") {
+        let clean: Vec<u8> = bytes
+            .iter()
+            .cloned()
+            .filter(|&b| b != 0 && !b.is_ascii_whitespace())
+            .collect();
+        return clean.is_empty() || clean == b"file://";
+    }
+
+    // Keep old guard for <meta tags (tiny icons)
+    if bytes.starts_with(b"<meta") {
         return true;
     }
 
-    let mut clean = bytes
+    // Remove NULs and whitespace for other checks
+    let clean = bytes
         .iter()
         .cloned()
         .filter(|&b| b != 0)
+        .skip_while(|b| b.is_ascii_whitespace())
         .collect::<Vec<u8>>();
-    
-    while !clean.is_empty() && clean.first().unwrap().is_ascii_whitespace() {
-        clean.remove(0);
-    }
-    while !clean.is_empty() && clean.last().unwrap().is_ascii_whitespace() {
-        clean.pop();
-    }
 
     if clean.is_empty() || clean == b"0,0" {
         return true;
     }
 
+    // Ignore tiny images
     if detect_content_type(&clean).starts_with("image/") && clean.len() < 100 {
         return true;
     }
@@ -92,20 +104,10 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
             let mut bytes = Vec::with_capacity(1024);
             if pipe.read_to_end(&mut bytes).is_ok() && !bytes.is_empty() {
                 drop(pipe);
-                
-                if should_ignore_bytes(&bytes) {
-                    continue;
-                }
 
                 if *mime == PasteMimeType::Text {
-                    let mut clean = bytes.clone().into_iter().filter(|&b| b != 0).collect::<Vec<u8>>();
-                    while !clean.is_empty() && clean.first().unwrap().is_ascii_whitespace() {
-                        clean.remove(0);
-                    }
-                    while !clean.is_empty() && clean.last().unwrap().is_ascii_whitespace() {
-                        clean.pop();
-                    }
-                    if !clean.is_empty() {
+                    let clean = bytes.iter().cloned().filter(|&b| b != 0).collect::<Vec<u8>>();
+                    if !should_ignore_bytes(&clean) {
                         if String::from_utf8(clean.clone()).is_ok() {
                             *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(clean.clone());
                             return Ok(clean);
@@ -128,7 +130,6 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
         return Ok(img);
     }
 
-    // Fallback to persistent memory
     if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
         return Ok(data.clone());
     }
@@ -138,11 +139,9 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
 
 /// Set X11 clipboard
 pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
-    // Store BEFORE setting
     *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
     
-    let clipboard =
-        X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
+    let clipboard = X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
     clipboard
         .store(
             clipboard.setter.atoms.clipboard,
@@ -155,8 +154,7 @@ pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
 
 /// Get X11 clipboard - reads from system
 pub fn get_x11_clipboard_bytes() -> Result<Vec<u8>, String> {
-    let clipboard =
-        X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
+    let clipboard = X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
     
     match clipboard.load(
         clipboard.getter.atoms.clipboard,
@@ -178,11 +176,11 @@ pub fn get_x11_clipboard_bytes() -> Result<Vec<u8>, String> {
     }
 }
 
-/// Set clipboard based on current environment
-pub fn set_clipboard(data: &[u8]) -> Result<(), String> {
+/// Internal: set clipboard with optional hash update
+fn set_clipboard_inner(data: &[u8], update_last_written: bool) -> Result<(), String> {
     let content_type = detect_content_type(data);
 
-    if content_type == "text" {
+    if update_last_written && content_type == "text" {
         let normalized = normalize_clipboard_bytes(data);
         let mut hasher = DefaultHasher::new();
         normalized.hash(&mut hasher);
@@ -194,6 +192,16 @@ pub fn set_clipboard(data: &[u8]) -> Result<(), String> {
         DesktopEnv::X11 => set_x11_clipboard(data),
         DesktopEnv::Unknown => set_wayland_clipboard_bytes(data).or_else(|_| set_x11_clipboard(data)),
     }
+}
+
+/// Set clipboard and update hash (normal use)
+pub fn set_clipboard(data: &[u8]) -> Result<(), String> {
+    set_clipboard_inner(data, true)
+}
+
+/// Set clipboard WITHOUT updating hash (used by watcher keep-alive)
+pub fn set_clipboard_no_hash(data: &[u8]) -> Result<(), String> {
+    set_clipboard_inner(data, false)
 }
 
 /// Get clipboard based on current environment
@@ -264,7 +272,6 @@ pub fn get_clipboard_for_paste() -> Result<Vec<u8>, String> {
 }
 
 /// Get the most recent clipboard item from persistent memory
-#[allow(dead_code)]
 pub fn get_persistent_clipboard() -> Option<Vec<u8>> {
     PERSISTENT_CLIPBOARD_DATA.lock().unwrap().clone()
 }
@@ -276,13 +283,3 @@ pub fn cache_clipboard_data(data: &[u8]) {
     }
 }
 
-#[allow(dead_code)]
-pub fn set_clipboard_text(text: &str) -> Result<(), String> {
-    set_clipboard(text.as_bytes())
-}
-
-#[allow(dead_code)]
-pub fn get_clipboard_text() -> Result<String, String> {
-    let bytes = get_clipboard()?;
-    String::from_utf8(bytes).map_err(|e| e.to_string())
-}

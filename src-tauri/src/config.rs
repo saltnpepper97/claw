@@ -21,6 +21,7 @@ pub struct ClipboardConfig {
     pub enable_titlebar: bool,
     pub force_dark_mode: bool,
     pub keybinds: Keybinds,
+    pub persist_history: bool,
 }
 
 /// Helper: tries key as-is, then _ → -, then - → _
@@ -99,6 +100,7 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
     let history_limit = get_config_or(&config, "clipboard.history_max_length", 50u64);
     let enable_titlebar = get_config_or(&config, "clipboard.enable_titlebar", true);
     let force_dark_mode = get_config_or(&config, "clipboard.force_dark_mode", false);
+    let persist_history = get_config_or(&config, "clipboard.persist_history", true);
 
     // Load keybinds
     let keybinds = Keybinds {
@@ -114,6 +116,7 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
         enable_titlebar,
         force_dark_mode,
         keybinds,
+        persist_history,
     };
 
     Ok((clipboard, theme))

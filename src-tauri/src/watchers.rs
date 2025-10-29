@@ -12,7 +12,7 @@ pub fn spawn_clipboard_watcher(
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let mut poll_interval_ms = 300u64;
+        let mut poll_interval_ms = 250u64;
         let mut last_seen_hash: Option<u64> = None;
         let mut last_reinject_time = std::time::Instant::now();
         let mut consecutive_empty_reads = 0u32;
@@ -29,14 +29,18 @@ pub fn spawn_clipboard_watcher(
             if crate::clipboard::should_ignore_bytes(&content_bytes) {
                 consecutive_empty_reads += 1;
                 
-                // After 3 empty reads, try to restore from persistent memory
+                // Reset last_seen_hash if persistent memory is cleared
+                if crate::clipboard::get_persistent_clipboard().is_none() {
+                    if last_seen_hash.is_some() {
+                        last_seen_hash = None;
+                    }
+                }
+                
                 if consecutive_empty_reads >= 3 {
                     if let Some(persistent_data) = crate::clipboard::get_persistent_clipboard() {
                         if !crate::clipboard::should_ignore_bytes(&persistent_data) {
-                            eprintln!("Clipboard lost, restoring from persistent memory");
-                            let _ = crate::clipboard::set_clipboard(&persistent_data);
+                            let _ = crate::clipboard::set_clipboard_no_hash(&persistent_data);
                             
-                            // FIXED: Use normalized hash to match what set_clipboard uses
                             let normalized = normalize_clipboard_bytes(&persistent_data);
                             let mut hasher = DefaultHasher::new();
                             normalized.hash(&mut hasher);
@@ -52,10 +56,8 @@ pub fn spawn_clipboard_watcher(
                 continue;
             }
 
-            // Reset empty counter - we have valid content
             consecutive_empty_reads = 0;
 
-            // FIXED: Always use normalized bytes for hashing to match set_clipboard behavior
             let normalized = normalize_clipboard_bytes(&content_bytes);
             let mut hasher = DefaultHasher::new();
             normalized.hash(&mut hasher);
@@ -65,12 +67,12 @@ pub fn spawn_clipboard_watcher(
             if Some(content_hash) == last_seen_hash {
                 let elapsed = last_reinject_time.elapsed();
                 if elapsed.as_secs() >= 2 {
-                    let _ = crate::clipboard::set_clipboard(&content_bytes);
+                    let _ = crate::clipboard::set_clipboard_no_hash(&content_bytes);
                     last_reinject_time = std::time::Instant::now();
                 }
                 drop(content_bytes);
                 drop(normalized);
-                poll_interval_ms = 300;
+                poll_interval_ms = 250;
                 continue;
             }
 
@@ -80,19 +82,18 @@ pub fn spawn_clipboard_watcher(
 
             crate::clipboard::cache_clipboard_data(&content_bytes);
 
-            // Check if this is content WE just wrote
             {
                 let last = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
+
                 if Some(content_hash) == *last {
                     drop(content_bytes);
                     drop(normalized);
-                    poll_interval_ms = 300;
+                    poll_interval_ms = 250;
                     continue;
                 }
-                // Don't set it here - let set_clipboard handle it
             }
 
-            poll_interval_ms = 300;
+            poll_interval_ms = 250;
 
             drop(content_bytes);
             

@@ -38,10 +38,6 @@ struct ConfigUpdate {
     theme: Theme,
 }
 
-// ============================================================================
-// MAIN RUN FUNCTION
-// ============================================================================
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()      
@@ -62,11 +58,26 @@ pub fn run() {
         .setup(|app| {
             let app_handle = app.handle();
 
-            // Clear history on startup
-            if let Ok(mut hist) = history::load_history(&app_handle, 100) {
-                hist.clear();
-                let _ = history::save_history(&app_handle, &hist);
-                drop(hist);
+            let claw_config = Arc::new(RwLock::new(load_claw_config()));
+            app.manage(claw_config.clone());
+
+            // Cleanup history on exit if persistence is disabled
+            {
+                let app_handle = app_handle.clone();
+                let claw_config = claw_config.clone();
+                app_handle.clone().once("tauri://exit", move |_event| {
+                    let app_handle = app_handle.clone();
+                    let claw_config = claw_config.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let persist = claw_config.read().await.0.persist_history;
+                        if !persist {
+                            if let Ok(mut hist) = history::load_history(&app_handle, 100) {
+                                hist.clear();
+                                let _ = history::save_history(&app_handle, &hist);
+                            }
+                        }
+                    });
+                });
             }
 
             let main_window = app.get_webview_window("main").unwrap();
