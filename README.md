@@ -86,6 +86,9 @@ clipboard:
     theme = "default"
     history-max-length = 100
     enable_titlebar = true
+    # By default Claw persists
+    # clipboard history between runs
+    persist-history = false
     force-dark-mode = false
 
     keybinds:
