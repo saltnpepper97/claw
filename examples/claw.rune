@@ -10,6 +10,9 @@ clipboard:
     theme = "default"
     history-max-length = 100
     enable_titlebar = true
+    # History is persisted by default set to false
+    # here to have history clear between runs.
+    #persist-history = false
     force-dark-mode = false
 
     keybinds:

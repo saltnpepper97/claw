@@ -14,27 +14,37 @@ pub static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|
 /// Set Wayland clipboard
 pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
     let content_type = detect_content_type(data);
-    
+
     // Store BEFORE setting to avoid race condition
     *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
-    
-    let mime_type = if content_type.starts_with("image/") {
-        match content_type.as_str() {
+
+    if content_type.starts_with("image/") {
+        // Images
+        let mime_type = match content_type.as_str() {
             "image/png" => MimeType::Specific("image/png".into()),
             "image/jpeg" => MimeType::Specific("image/jpeg".into()),
             "image/gif" => MimeType::Specific("image/gif".into()),
             "image/webp" => MimeType::Specific("image/webp".into()),
             "image/bmp" => MimeType::Specific("image/bmp".into()),
             _ => MimeType::Autodetect,
-        }
-    } else {
-        MimeType::Autodetect
-    };
+        };
 
-    wl_clipboard_rs::copy::Options::new()
-        .copy(Source::Bytes(data.into()), mime_type)
-        .map_err(|e| e.to_string())
+        wl_clipboard_rs::copy::Options::new()
+            .copy(Source::Bytes(data.to_vec().into_boxed_slice()), mime_type)
+            .map_err(|e| e.to_string())
+    } else {
+        // Text
+        let mut text_bytes = data.to_vec();
+        if !text_bytes.ends_with(&[b'\n']) {
+            text_bytes.push(b'\n'); // trailing newline helps GTK/Qt apps
+        }
+
+        wl_clipboard_rs::copy::Options::new()
+            .copy(Source::Bytes(text_bytes.into_boxed_slice()), MimeType::Text)
+            .map_err(|e| e.to_string())
+    }
 }
+
 
 /// Check if bytes should be ignored
 pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
