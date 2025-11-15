@@ -65,8 +65,6 @@ fn load_config_with_gather(path: &Path) -> Result<RuneConfig> {
     let mut config = RuneConfig::from_str(&content)
         .map_err(|e| eyre!("Failed to parse main config: {}", e))?;
 
-    eprintln!("🔍 Parsing gather statements from config...");
-
     // Process each line to find gather statements (excluding comments)
     for line in content.lines() {
         let trimmed = line.trim();
@@ -81,8 +79,6 @@ fn load_config_with_gather(path: &Path) -> Result<RuneConfig> {
             let gather_path_str = &caps[1];
             let alias = caps.get(2).map(|m| m.as_str().to_string());
 
-            eprintln!("🔍 Found gather: '{}' as {:?}", gather_path_str, alias);
-
             // Expand tilde if present
             let expanded_path = if gather_path_str.starts_with("~/") {
                 dirs::home_dir()
@@ -94,11 +90,8 @@ fn load_config_with_gather(path: &Path) -> Result<RuneConfig> {
                 config_dir.join(gather_path_str)
             };
 
-            eprintln!("🔍 Expanded gather path: {:?}", expanded_path);
-
             // Check if file exists
             if !expanded_path.exists() {
-                eprintln!("⚠️  Gather file not found: {:?}", expanded_path);
                 continue;
             }
 
@@ -120,13 +113,10 @@ fn load_config_with_gather(path: &Path) -> Result<RuneConfig> {
                         .to_string()
                 });
 
-                eprintln!("✅ Injecting gathered document as '{}'", import_alias);
                 config.inject_import(import_alias, doc.clone());
             }
         }
     }
-
-    eprintln!("✅ Final import aliases: {:?}", config.import_aliases());
 
     Ok(config)
 }
@@ -138,28 +128,16 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
     // Use our custom loader that handles gather statements
     let config = load_config_with_gather(&path_buf)?;
 
-    eprintln!("🔍 Import aliases after loading: {:?}", config.import_aliases());
-    eprintln!("🔍 Has 'theme' document: {}", config.has_document("theme"));
-    
-    // Check if gather loaded successfully by testing for theme data
-    if config.get::<String>("theme.light.background").is_ok() {
-        eprintln!("✅ Found theme.light.background at top level");
-    }
-
     // Load the theme block with priority system
     let theme = {
         let mut loaded_theme = None;
 
         // PRIORITY 1: Check for aliased gather imports (gather "path" as alias)
         let aliases = config.import_aliases();
-        eprintln!("🔍 Checking {} aliases", aliases.len());
         for alias in aliases {
-            eprintln!("🔍 Checking alias: {}", alias);
             if config.has_document(&alias) {
                 let test_path = format!("{}.theme.light.background", alias);
-                eprintln!("🔍 Testing path: {}", test_path);
                 if config.get::<String>(&test_path).is_ok() {
-                    eprintln!("✅ Found theme in aliased import: {}", alias);
                     loaded_theme = Some(Theme::from_config(&config, Some(&alias)));
                     break;
                 }
@@ -168,22 +146,16 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
 
         // PRIORITY 2: Check for top-level theme block (from non-aliased gather)
         if loaded_theme.is_none() {
-            eprintln!("🔍 Checking for top-level theme.light.background");
             if config.get::<String>("theme.light.background").is_ok() {
-                eprintln!("✅ Found theme at top level (non-aliased gather)");
                 loaded_theme = Some(Theme::from_config(&config, None));
             }
         }
 
         // PRIORITY 3: Check for clipboard.theme field
         if loaded_theme.is_none() {
-            eprintln!("🔍 Checking for clipboard.theme field");
             if let Ok(theme_name) = config.get::<String>("clipboard.theme") {
-                eprintln!("🔍 Found clipboard.theme = {}", theme_name);
                 if let Some(theme_path) = find_theme_file(&theme_name) {
-                    eprintln!("🔍 Found theme file at: {:?}", theme_path);
                     if let Ok(theme_cfg) = RuneConfig::from_file(&theme_path) {
-                        eprintln!("✅ Loaded theme from file");
                         loaded_theme = Some(Theme::from_config(&theme_cfg, None));
                     }
                 }
@@ -192,17 +164,12 @@ pub fn load_config(path: &str) -> Result<(ClipboardConfig, Theme)> {
 
         // PRIORITY 4: Check for "theme" document
         if loaded_theme.is_none() {
-            eprintln!("🔍 Checking for 'theme' document");
             if config.has_document("theme") {
-                eprintln!("✅ Found 'theme' document");
                 loaded_theme = Some(Theme::from_config(&config, Some("theme")));
             }
         }
 
         // PRIORITY 5: Default theme
-        if loaded_theme.is_none() {
-            eprintln!("⚠️  No theme found, using default");
-        }
         loaded_theme.unwrap_or_else(|| Theme::default())
     };
 
@@ -262,12 +229,8 @@ pub fn find_config() -> Option<PathBuf> {
 /// Top-level config loader that exits gracefully on failure.
 pub fn load_claw_config() -> (ClipboardConfig, Theme) {
     let path = find_config().expect("No claw.rune config found");
-    eprintln!("📄 Loading config from: {:?}", path);
     match load_config(&path.to_string_lossy()) {
-        Ok(cfg) => {
-            eprintln!("✅ Config loaded successfully");
-            cfg
-        },
+        Ok(cfg) => cfg,
         Err(err) => {
             eprintln!("❌ Configuration error:\n{}", err);
             process::exit(1);
