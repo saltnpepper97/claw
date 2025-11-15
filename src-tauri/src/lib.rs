@@ -123,10 +123,6 @@ pub fn run() {
 
             let _ = tray::update_tray_menu(&app_handle, tray::TRAY_ID);
 
-            // Load and manage config
-            let claw_config = Arc::new(RwLock::new(load_claw_config()));
-            app.manage(claw_config.clone());
-
             // Emit initial config to frontend
             emit_initial_config(app_handle.clone(), claw_config.clone());
 
