@@ -12,6 +12,24 @@
     let contentCache = $state<Map<string, number[]>>(new Map());
     let loadingStates = $state<Map<string, boolean>>(new Map());
 
+    let expandedEntries = $state<Set<string>>(new Set());
+
+    function isExpanded(entryId: string): boolean {
+        return expandedEntries.has(entryId);
+    }
+
+    function toggleExpanded(entryId: string) {
+        const next = new Set(expandedEntries);
+        if (next.has(entryId)) next.delete(entryId);
+        else next.add(entryId);
+        expandedEntries = next;
+    }
+
+    // Heuristic: show expander only when it’s likely longer than the truncated view.
+    function shouldShowExpander(text: string): boolean {
+        return text.length > 180 || text.includes('\n');
+    }
+
     async function loadEntryContent(entryId: string): Promise<number[]> {
         // Check cache first
         if (contentCache.has(entryId)) {
@@ -120,6 +138,12 @@
                 contentCache.delete(id);
             }
         }
+
+        const nextExpanded = new Set(expandedEntries);
+        for (const id of Array.from(nextExpanded)) {
+            if (!currentIds.has(id)) nextExpanded.delete(id);
+        }
+        expandedEntries = nextExpanded;
     }
 
     onMount(() => {
@@ -200,7 +224,32 @@
                             <div class="text loading">Loading...</div>
                         {:then content}
                             {#if content && content.length > 0}
-                                <div class="text">{truncate(getTextContent(content))}</div>
+                                {@const fullText = getTextContent(content)}
+                                {@const canExpand = shouldShowExpander(fullText)}
+                                {@const expanded = isExpanded(entry.id)}
+
+                                <div class="text-wrap">
+                                    <div class="text {expanded ? 'expanded' : ''}">
+                                        {#if expanded}
+                                            {fullText}
+                                        {:else}
+                                            {truncate(fullText)}
+                                        {/if}
+                                    </div>
+
+                                    {#if canExpand}
+                                        <button
+                                            class="expand-btn {expanded ? 'open' : ''}"
+                                            type="button"
+                                            aria-label={expanded ? 'Collapse' : 'Expand'}
+                                            aria-expanded={expanded}
+                                            onclick={(e) => { e.stopPropagation(); toggleExpanded(entry.id); }}
+                                            onkeydown={(e) => e.stopPropagation()}
+                                        >
+                                            <span class="chev">▸</span>
+                                        </button>
+                                    {/if}
+                                </div>
                             {:else}
                                 <div class="text error">No content</div>
                             {/if}
@@ -292,6 +341,7 @@
         margin-bottom: 8px;
         word-break: break-all;
         min-height: 30px;
+        white-space: pre-wrap;
     }
 
     .text.loading,
@@ -357,6 +407,71 @@
     .history-item.selected .size {
         background-color: rgba(0, 0, 0, 0.2);
         color: var(--selected-foreground);
+    }
+
+    .text-wrap {
+        position: relative;
+    }
+
+    /* Big clickable button pinned to the top-right of the text bubble */
+    .expand-btn {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: rgba(0,0,0,0.04);
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+    }
+
+    .expand-btn:hover {
+        background: var(--hover);
+        border-color: var(--outline);
+        color: var(--text-primary);
+    }
+
+    .history-item.selected .expand-btn {
+        background: rgba(0,0,0,0.18);
+        color: var(--selected-foreground);
+    }
+
+    .history-item.selected .expand-btn:hover {
+        background: rgba(0,0,0,0.24);
+        border-color: rgba(255,255,255,0.18);
+    }
+
+    .chev {
+        font-size: 20px; /* BIGGER ARROW */
+        line-height: 1;
+        display: inline-block;
+        transform: rotate(0deg);
+        transition: transform 150ms ease;
+    }
+
+    .expand-btn.open .chev {
+        transform: rotate(90deg); /* ▸ becomes ▾ vibe */
+    }
+
+    /* Add right padding so the button doesn’t overlap text */
+    .text-wrap .text {
+        padding-right: 42px;
+    }
+
+    /* Expanded: constrain height + scroll so it doesn't explode your list */
+    .text.expanded {
+        max-height: 260px;
+        overflow: auto;
+    }
+
+    .text.expanded::-webkit-scrollbar {
+        width: 0;
     }
 
     @media (max-width: 600px) {

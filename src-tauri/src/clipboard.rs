@@ -1,15 +1,23 @@
+// Author: Dustin Pilgrim
+// License: MIT
+
 use crate::detect::DesktopEnv;
+use once_cell::sync::Lazy;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Read;
 use std::sync::Mutex;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use once_cell::sync::Lazy;
 use wl_clipboard_rs::copy::{MimeType, Source};
 use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType as PasteMimeType, Seat};
 use x11_clipboard::Clipboard as X11Clipboard;
+
 use crate::LAST_WRITTEN_CLIPBOARD;
 use crate::utils::{detect_content_type, normalize_clipboard_bytes};
 
 pub static PERSISTENT_CLIPBOARD_DATA: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
+
+fn is_text_like_type(t: &str) -> bool {
+    t == "text" || t == "text/uri-list" || t == "x-special/gnome-copied-files"
+}
 
 /// Set Wayland clipboard
 pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
@@ -33,18 +41,24 @@ pub fn set_wayland_clipboard_bytes(data: &[u8]) -> Result<(), String> {
             .copy(Source::Bytes(data.to_vec().into_boxed_slice()), mime_type)
             .map_err(|e| e.to_string())
     } else {
-        // Text
+        // Text / uri-list / gnome-copied-files
         let mut text_bytes = data.to_vec();
         if !text_bytes.ends_with(&[b'\n']) {
             text_bytes.push(b'\n'); // trailing newline helps GTK/Qt apps
         }
 
+        // Prefer a specific mime when we can detect it
+        let mime_type = match content_type.as_str() {
+            "text/uri-list" => MimeType::Specific("text/uri-list".into()),
+            "x-special/gnome-copied-files" => MimeType::Specific("x-special/gnome-copied-files".into()),
+            _ => MimeType::Text,
+        };
+
         wl_clipboard_rs::copy::Options::new()
-            .copy(Source::Bytes(text_bytes.into_boxed_slice()), MimeType::Text)
+            .copy(Source::Bytes(text_bytes.into_boxed_slice()), mime_type)
             .map_err(|e| e.to_string())
     }
 }
-
 
 /// Check if bytes should be ignored
 pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
@@ -69,6 +83,15 @@ pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
             .filter(|&b| b != 0 && !b.is_ascii_whitespace())
             .collect();
         return clean.is_empty() || clean == b"file://";
+    }
+
+    // GNOME copied-files format: "copy\nfile://...\n..."
+    if bytes.starts_with(b"copy\n") || bytes.starts_with(b"cut\n") {
+        // If it doesn't contain any file://, it's probably junk
+        if !bytes.windows(7).any(|w| w == b"file://") {
+            return true;
+        }
+        return false;
     }
 
     // Keep old guard for <meta tags (tiny icons)
@@ -98,7 +121,10 @@ pub fn should_ignore_bytes(bytes: &[u8]) -> bool {
 
 /// Get Wayland clipboard - reads from system
 pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
+    // IMPORTANT: Thunar/Gtk file copy uses these formats, not plain text.
     let mimes = [
+        PasteMimeType::Specific("x-special/gnome-copied-files".into()),
+        PasteMimeType::Specific("text/uri-list".into()),
         PasteMimeType::Text,
         PasteMimeType::Specific("image/png".into()),
         PasteMimeType::Specific("image/jpeg".into()),
@@ -115,13 +141,15 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
             if pipe.read_to_end(&mut bytes).is_ok() && !bytes.is_empty() {
                 drop(pipe);
 
-                if *mime == PasteMimeType::Text {
+                let is_textish = matches!(mime, PasteMimeType::Text)
+                    || matches!(mime, PasteMimeType::Specific(s) if *s == "text/uri-list")
+                    || matches!(mime, PasteMimeType::Specific(s) if *s == "x-special/gnome-copied-files");
+
+                if is_textish {
                     let clean = bytes.iter().cloned().filter(|&b| b != 0).collect::<Vec<u8>>();
-                    if !should_ignore_bytes(&clean) {
-                        if String::from_utf8(clean.clone()).is_ok() {
-                            *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(clean.clone());
-                            return Ok(clean);
-                        }
+                    if !should_ignore_bytes(&clean) && String::from_utf8(clean.clone()).is_ok() {
+                        *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(clean.clone());
+                        return Ok(clean);
                     }
                     continue;
                 }
@@ -150,14 +178,10 @@ pub fn get_wayland_clipboard_bytes() -> Result<Vec<u8>, String> {
 /// Set X11 clipboard
 pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
     *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
-    
+
     let clipboard = X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
     clipboard
-        .store(
-            clipboard.setter.atoms.clipboard,
-            clipboard.setter.atoms.incr,
-            data,
-        )
+        .store(clipboard.setter.atoms.clipboard, clipboard.setter.atoms.incr, data)
         .map_err(|e| format!("Failed to set X11 clipboard: {}", e))?;
     Ok(())
 }
@@ -165,24 +189,33 @@ pub fn set_x11_clipboard(data: &[u8]) -> Result<(), String> {
 /// Get X11 clipboard - reads from system
 pub fn get_x11_clipboard_bytes() -> Result<Vec<u8>, String> {
     let clipboard = X11Clipboard::new().map_err(|e| format!("Failed to create X11 clipboard: {}", e))?;
-    
-    match clipboard.load(
-        clipboard.getter.atoms.clipboard,
-        clipboard.getter.atoms.incr,
-        clipboard.getter.atoms.property,
-        std::time::Duration::from_secs(3),
-    ) {
-        Ok(contents) => {
-            *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(contents.clone());
-            Ok(contents)
-        },
-        Err(_) => {
-            if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
-                Ok(data.clone())
-            } else {
-                Ok(vec![])
+
+    // BUGFIX: requesting `incr` as the *target* is wrong. Request UTF8 text.
+    // This dramatically improves reads and is required for many providers.
+    let try_targets = [
+        clipboard.getter.atoms.utf8_string,
+        clipboard.getter.atoms.string,
+    ];
+
+    for target in try_targets {
+        match clipboard.load(
+            clipboard.getter.atoms.clipboard,
+            target,
+            clipboard.getter.atoms.property,
+            std::time::Duration::from_secs(3),
+        ) {
+            Ok(contents) if !contents.is_empty() => {
+                *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(contents.clone());
+                return Ok(contents);
             }
+            _ => {}
         }
+    }
+
+    if let Some(data) = PERSISTENT_CLIPBOARD_DATA.lock().unwrap().as_ref() {
+        Ok(data.clone())
+    } else {
+        Ok(vec![])
     }
 }
 
@@ -190,7 +223,8 @@ pub fn get_x11_clipboard_bytes() -> Result<Vec<u8>, String> {
 fn set_clipboard_inner(data: &[u8], update_last_written: bool) -> Result<(), String> {
     let content_type = detect_content_type(data);
 
-    if update_last_written && content_type == "text" {
+    // Hash-update should include uri-lists too (prevents loops when reinjecting file copies)
+    if update_last_written && is_text_like_type(&content_type) {
         let normalized = normalize_clipboard_bytes(data);
         let mut hasher = DefaultHasher::new();
         normalized.hash(&mut hasher);
@@ -243,8 +277,9 @@ pub fn get_clipboard() -> Result<Vec<u8>, String> {
         return Ok(bytes);
     }
 
-    if content_type == "text" {
-        if let Ok(_) = String::from_utf8(bytes.clone()) {
+    // For any UTF-8-ish text formats (including uri-lists), normalize safely
+    if is_text_like_type(&content_type) {
+        if String::from_utf8(bytes.clone()).is_ok() {
             return Ok(normalize_clipboard_bytes(&bytes));
         } else {
             return Ok(vec![]);
@@ -267,8 +302,8 @@ pub fn get_clipboard_for_paste() -> Result<Vec<u8>, String> {
             return Ok(data.clone());
         }
 
-        if content_type == "text" {
-            if let Ok(_) = String::from_utf8(data.clone()) {
+        if is_text_like_type(&content_type) {
+            if String::from_utf8(data.clone()).is_ok() {
                 return Ok(normalize_clipboard_bytes(data));
             } else {
                 return Ok(vec![]);
@@ -292,4 +327,3 @@ pub fn cache_clipboard_data(data: &[u8]) {
         *PERSISTENT_CLIPBOARD_DATA.lock().unwrap() = Some(data.to_vec());
     }
 }
-

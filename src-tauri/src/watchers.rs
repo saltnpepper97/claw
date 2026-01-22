@@ -1,8 +1,17 @@
+// Author: Dustin Pilgrim
+// License: MIT
+
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::RwLock;
+
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use crate::{config, utils::{normalize_clipboard_bytes, detect_content_type}, ConfigUpdate};
+
+use crate::{
+    config,
+    utils::{detect_content_type, normalize_clipboard_bytes},
+    ConfigUpdate,
+};
 
 pub fn spawn_clipboard_watcher(
     app_handle: AppHandle,
@@ -28,19 +37,19 @@ pub fn spawn_clipboard_watcher(
             // Check if clipboard is empty/invalid
             if crate::clipboard::should_ignore_bytes(&content_bytes) {
                 consecutive_empty_reads += 1;
-                
+
                 // Reset last_seen_hash if persistent memory is cleared
                 if crate::clipboard::get_persistent_clipboard().is_none() {
                     if last_seen_hash.is_some() {
                         last_seen_hash = None;
                     }
                 }
-                
+
                 if consecutive_empty_reads >= 3 {
                     if let Some(persistent_data) = crate::clipboard::get_persistent_clipboard() {
                         if !crate::clipboard::should_ignore_bytes(&persistent_data) {
                             let _ = crate::clipboard::set_clipboard_no_hash(&persistent_data);
-                            
+
                             let normalized = normalize_clipboard_bytes(&persistent_data);
                             let mut hasher = DefaultHasher::new();
                             normalized.hash(&mut hasher);
@@ -50,7 +59,7 @@ pub fn spawn_clipboard_watcher(
                         }
                     }
                 }
-                
+
                 drop(content_bytes);
                 poll_interval_ms = 1000;
                 continue;
@@ -58,6 +67,7 @@ pub fn spawn_clipboard_watcher(
 
             consecutive_empty_reads = 0;
 
+            // Normalize conservatively (utils.rs now preserves line formats)
             let normalized = normalize_clipboard_bytes(&content_bytes);
             let mut hasher = DefaultHasher::new();
             normalized.hash(&mut hasher);
@@ -84,7 +94,6 @@ pub fn spawn_clipboard_watcher(
 
             {
                 let last = crate::LAST_WRITTEN_CLIPBOARD.lock().unwrap();
-
                 if Some(content_hash) == *last {
                     drop(content_bytes);
                     drop(normalized);
@@ -96,7 +105,7 @@ pub fn spawn_clipboard_watcher(
             poll_interval_ms = 250;
 
             drop(content_bytes);
-            
+
             if normalized.is_empty() || crate::clipboard::should_ignore_bytes(&normalized) {
                 drop(normalized);
                 continue;
@@ -104,7 +113,7 @@ pub fn spawn_clipboard_watcher(
 
             let history_limit = claw_config.read().await.0.history_limit as usize;
             let content_type = detect_content_type(&normalized);
-            
+
             if let Err(e) = crate::history::add_to_history(
                 &app_handle,
                 &normalized,
@@ -132,17 +141,14 @@ pub fn spawn_config_watcher(
         use std::path::PathBuf;
         use std::sync::mpsc::channel;
 
-        let main_config_path: PathBuf =
-            config::find_config().expect("No claw.rune config found");
+        let main_config_path: PathBuf = config::find_config().expect("No claw.rune config found");
 
         let mut watched_paths = HashSet::new();
         watched_paths.insert(main_config_path.clone());
 
         let gather_paths = || -> Vec<PathBuf> {
-            let content =
-                std::fs::read_to_string(&main_config_path).unwrap_or_default();
-            let gather_regex =
-                regex::Regex::new(r#"gather\s+"([^"]+)"(?:\s+as\s+(\w+))?"#).unwrap();
+            let content = std::fs::read_to_string(&main_config_path).unwrap_or_default();
+            let gather_regex = regex::Regex::new(r#"gather\s+"([^"]+)"(?:\s+as\s+(\w+))?"#).unwrap();
             gather_regex
                 .captures_iter(&content)
                 .filter_map(|cap| {
@@ -170,9 +176,7 @@ pub fn spawn_config_watcher(
             Watcher::new(tx, Config::default()).expect("Failed to create file watcher");
 
         for path in &watched_paths {
-            watcher
-                .watch(path, RecursiveMode::NonRecursive)
-                .expect("Failed to watch file");
+            watcher.watch(path, RecursiveMode::NonRecursive).expect("Failed to watch file");
         }
 
         loop {
@@ -180,9 +184,7 @@ pub fn spawn_config_watcher(
                 Ok(event) => {
                     if let Ok(ev) = event {
                         if let EventKind::Modify(_) = ev.kind {
-                            if let Ok(new_config) =
-                                config::load_config(&main_config_path.to_string_lossy())
-                            {
+                            if let Ok(new_config) = config::load_config(&main_config_path.to_string_lossy()) {
                                 *claw_config.write().await = new_config.clone();
 
                                 let update = ConfigUpdate {
@@ -193,19 +195,12 @@ pub fn spawn_config_watcher(
 
                                 let _ = app_handle.emit("config-reloaded", update);
 
-                                let new_paths: HashSet<_> =
-                                    gather_paths().into_iter().collect();
+                                let new_paths: HashSet<_> = gather_paths().into_iter().collect();
                                 for path in new_paths.difference(&watched_paths) {
-                                    watcher
-                                        .watch(path, RecursiveMode::NonRecursive)
-                                        .ok();
+                                    watcher.watch(path, RecursiveMode::NonRecursive).ok();
                                 }
                                 watched_paths = new_paths
-                                    .union(
-                                        &[main_config_path.clone()]
-                                            .into_iter()
-                                            .collect(),
-                                    )
+                                    .union(&[main_config_path.clone()].into_iter().collect())
                                     .cloned()
                                     .collect();
                             } else {

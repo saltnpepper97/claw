@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "claw",
+  "productName": "Claw",
   "version": "1.4.2",
   "identifier": "claw",
   "build": {
