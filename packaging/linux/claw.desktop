@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Claw
+Comment=Crustacean powered clipboard manager for X11 and Wayland
+Exec=claw
+Icon=claw
+Terminal=false
+Categories=Utility;
+StartupNotify=true

@@ -59,8 +59,12 @@ jobs:
 
           rm -rf "${STAGE_DIR}"
           mkdir -p "${STAGE_DIR}/bin"
+          mkdir -p "${STAGE_DIR}/usr/share/applications"
+          mkdir -p "${STAGE_DIR}/usr/share/icons/hicolor/128x128/apps"
 
           install -m 755 src-tauri/target/release/claw "${STAGE_DIR}/bin/claw"
+          install -m 644 packaging/linux/claw.desktop "${STAGE_DIR}/usr/share/applications/claw.desktop"
+          install -m 644 src-tauri/icons/128x128.png "${STAGE_DIR}/usr/share/icons/hicolor/128x128/apps/claw.png"
           cp -r examples "${STAGE_DIR}/examples"
           install -m 644 LICENSE "${STAGE_DIR}/LICENSE"
           install -m 644 README.md "${STAGE_DIR}/README.md"
