@@ -50,6 +50,24 @@ jobs:
       
       - name: Get app version
         run: echo "APP_VERSION=$(jq -r .version src-tauri/tauri.conf.json)" >> $GITHUB_ENV
+
+      - name: Create portable tar.gz
+        run: |
+          set -euo pipefail
+          PKG_DIR="claw-${APP_VERSION}-linux-x86_64"
+          STAGE_DIR="src-tauri/target/release/portable/${PKG_DIR}"
+
+          rm -rf "${STAGE_DIR}"
+          mkdir -p "${STAGE_DIR}/bin"
+
+          install -m 755 src-tauri/target/release/claw "${STAGE_DIR}/bin/claw"
+          cp -r examples "${STAGE_DIR}/examples"
+          install -m 644 LICENSE "${STAGE_DIR}/LICENSE"
+          install -m 644 README.md "${STAGE_DIR}/README.md"
+
+          tar -C "src-tauri/target/release/portable" \
+            -czf "src-tauri/target/release/portable/${PKG_DIR}.tar.gz" \
+            "${PKG_DIR}"
       
       - name: List bundle contents
         run: |
@@ -65,5 +83,6 @@ jobs:
             src-tauri/target/release/bundle/deb/*_${{ env.APP_VERSION }}_amd64.deb
             src-tauri/target/release/bundle/rpm/*-${{ env.APP_VERSION }}-1.x86_64.rpm
             src-tauri/target/release/bundle/appimage/*_${{ env.APP_VERSION }}_amd64.AppImage
+            src-tauri/target/release/portable/claw-${{ env.APP_VERSION }}-linux-x86_64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
