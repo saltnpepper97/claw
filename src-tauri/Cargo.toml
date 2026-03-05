@@ -1,6 +1,6 @@
 [package]
 name = "claw"
-version = "1.5.2"
+version = "1.5.3"
 description = "Wayland & X11 compatible, simple clipboard manager"
 authors = ["Dustin Pilgrim"]
 license = "MIT"
